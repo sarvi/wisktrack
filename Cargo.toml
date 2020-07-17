@@ -1,0 +1,25 @@
+[package]
+name = "wisktrack"
+version = "0.1.0"
+authors = ["Saravanan Shanmugham <sarvi@cisco.com>"]
+description = "LD_PRELOAD based depedency tracker"
+edition = "2018"
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/sarvi/wisktrack"
+repository = "https://github.com/sarvi/wisktrack"
+keywords = ["LD_PRELOAD", "filesystem", "tracker", "build", "dependencies"]
+# categories = ["command-line-utilities"]
+
+
+[lib]
+crate-type = ["dylib"]
+path = "src/lib.rs"
+
+[dependencies]
+redhook = { version = "1.0" }
+libc = { version = "0.2.72" }
+
+# [profile.dev]
+# Optimize by default so we don't need to remember to always pass in --release
+# opt-level = 3
