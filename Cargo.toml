@@ -11,14 +11,22 @@ repository = "https://github.com/sarvi/wisktrack"
 keywords = ["LD_PRELOAD", "filesystem", "tracker", "build", "dependencies"]
 # categories = ["command-line-utilities"]
 
-
 [lib]
-crate-type = ["dylib"]
+crate-type = ["rlib", "dylib"]
 path = "src/lib.rs"
 
+[dependencies.redhook]
+path = "../redhook"
+
 [dependencies]
-redhook = { version = "1.0" }
+# redhook = { git = "https://github.com/sarvi/redhook.git" }
 libc = { version = "0.2.72" }
+ctor = { version = "0.1.15" }
+tracing = { version = "0.1.17" }
+env_logger = "*"
+tracing-subscriber = {version = "0.2.9", features = ["chrono", "env-filter", "fmt"]}
+test-env-log = {version = "0.2.2", features = ["trace"] }
+tracing-appender = {version =  "0.1.1"}
 
 # [profile.dev]
 # Optimize by default so we don't need to remember to always pass in --release
