@@ -20,13 +20,17 @@ path = "../redhook"
 
 [dependencies]
 # redhook = { git = "https://github.com/sarvi/redhook.git" }
+uuid = { version = "0.8", features = ["serde", "v4"] }
 libc = { version = "0.2.72" }
 ctor = { version = "0.1.15" }
+lazy_static = { version = "1.4.0" }
 tracing = { version = "0.1.17" }
 env_logger = "*"
 tracing-subscriber = {version = "0.2.9", features = ["chrono", "env-filter", "fmt"]}
 test-env-log = {version = "0.2.2", features = ["trace"] }
 tracing-appender = {version =  "0.1.1"}
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 # [profile.dev]
 # Optimize by default so we don't need to remember to always pass in --release
