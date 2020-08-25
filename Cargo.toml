@@ -15,11 +15,11 @@ keywords = ["LD_PRELOAD", "filesystem", "tracker", "build", "dependencies"]
 crate-type = ["rlib", "dylib"]
 path = "src/lib.rs"
 
-[dependencies.redhook]
-path = "../redhook"
+# [dependencies.redhook]
+# path = "../redhook"
 
 [dependencies]
-# redhook = { git = "https://github.com/sarvi/redhook.git" }
+redhook = { git = "https://github.com/sarvi/redhook.git" }
 uuid = { version = "0.8", features = ["serde", "v4"] }
 libc = { version = "0.2.72" }
 ctor = { version = "0.1.15" }

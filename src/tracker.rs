@@ -32,13 +32,12 @@ pub enum Ops {
 }
 
 pub struct Tracker {
+    pub wsroot: String,
     pub filename: String,
     pub file: File,
     pub uuid: String,
     pub puuid: String,
     pub env : HashMap<String, String>,
-    // pub mutex : Mutex,
-    // mut file: &File, uuid: &str, 
 }
 
 impl Tracker {
@@ -71,7 +70,6 @@ impl Tracker {
         } else { String::from(&fname) };
  
         let mut map = HashMap::new();
-        // let mutex = Mutex::new();
         for (key, val) in env::vars_os() {
             // Use pattern bindings instead of testing .is_some() followed by .unwrap()
             if let (Ok(k), Ok(v)) = (key.into_string(), val.into_string()) {
@@ -80,23 +78,21 @@ impl Tracker {
         }
         println!("Track Data: {}", fname);
         // let mut file = File::create(&filename).unwrap();
-        // wisk_reportop(file, &PARENT_UUID, "Calls", &UUID);
+        // wisk_report(file, &PARENT_UUID, "Calls", &UUID);
         // write!(self.file, "{} Calls \"{}\"", *PARENT_UUID, *UUID).unwrap();
         let tracker = Tracker {
+            wsroot : wsroot.to_string(),
             filename : fname.to_string(),
             file : OpenOptions::new().create(true).append(true).open(&fname).unwrap(),
-            // file : File::create(&fname).unwrap(),
             uuid  : uuid,
             puuid :  puuid,
             env : map,
-            // mutex: mutex,
         };
         (&tracker.file).write_all(format!("{} CALLS {}\n", tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap()).as_bytes()).unwrap();
-        // write!(&tracker.file, "{} CALLS {}\n", tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap()).unwrap();
         tracker
     }
     
-    pub fn wisk_reportop(self: &Self, op : &str, value: &str) {
+    pub fn report(self: &Self, op : &str, value: &str) {
         let mut minlen: usize = self.uuid.len() + op.len() + 2;
         let mut availen: usize = SENDLIMIT - minlen;
         let mut lenleft = value.len();
@@ -109,7 +105,6 @@ impl Tracker {
             println!("minlen={} valeft={} ind={} max={}\n{} {} {}", minlen, lenleft, ind, max,
                     self.uuid, op, contin);
             (&self.file).write_all(format!("{} {} {}{}\n", self.uuid, op, contin, &value[ind..max]).as_bytes()).unwrap();
-            // write!(&self.file, "{} {} {}{}\n", self.uuid, op, contin, &value[ind..max]).unwrap();
             contin = "*";
             ind = max ;
             minlen = self.uuid.len() + op.len() + 2 + 1;
@@ -118,7 +113,7 @@ impl Tracker {
         (&self.file).flush().unwrap();
     }
     
-    pub fn wisk_reportops(self: &Self, mut op: Ops) {
+    pub fn reportop(self: &Self, mut op: Ops) {
         // if let Ops::ENV(ref mut map) = op {
         //     for (key, val) in env::vars_os() {
         //         if let (Ok(k), Ok(v)) = (key.into_string(), val.into_string()) {
@@ -128,7 +123,7 @@ impl Tracker {
         // }
         let serialized = serde_json::to_string(&op).unwrap();
         println!("serialized = {:?}", serialized);
-        self.wisk_reportop("ENV", &serialized);
+        self.report("ENV", &serialized);
     }
 
 }
@@ -136,18 +131,17 @@ impl Tracker {
 
 lazy_static! {
     pub static ref TRACKER : Tracker = Tracker::init();
-    // pub static ref TRACKER : Mutex<Tracker> = Mutex::new(Tracker::init());
 }
 
 
 #[cfg(test)]
-mod reportop_tests {
+mod report_tests {
     use std::io;
     use super::*;
 
     #[test]
-    fn reportop_test_000() -> io::Result<()> {
-        TRACKER.wisk_reportop("test_000", "");
+    fn report_test_000() -> io::Result<()> {
+        TRACKER.report("test_000", "");
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
@@ -157,20 +151,19 @@ mod reportop_tests {
     }
 
     #[test]
-    fn reportop_test_001() -> io::Result<()> {
-        TRACKER.wisk_reportop("test_001", "D");
+    fn report_test_001() -> io::Result<()> {
+        TRACKER.report("test_001", "D");
         println!("FileName: {}", TRACKER.filename);
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
         assert!(buffer.contains(&format!("{} test_001 D\n", TRACKER.uuid)));
-        // TRACKER.wisk_reportop("tests_001", "D");
         Ok(())
     }
 
     #[test]
-    fn reportop_test_002() -> io::Result<()> {
-        TRACKER.wisk_reportop("test_002", &"D".repeat(SENDLIMIT-42));
+    fn report_test_002() -> io::Result<()> {
+        TRACKER.report("test_002", &"D".repeat(SENDLIMIT-42));
         println!("FileName: {}", TRACKER.filename);
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
@@ -180,21 +173,20 @@ mod reportop_tests {
     }
 
     #[test]
-    fn reportop_tests_003() -> io::Result<()> {
-        TRACKER.wisk_reportop("test_003", &"D".repeat(SENDLIMIT-41));
+    fn report_tests_003() -> io::Result<()> {
+        TRACKER.report("test_003", &"D".repeat(SENDLIMIT-41));
         println!("FileName: {}", TRACKER.filename);
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
         assert!(buffer.contains(&format!("{} test_003 {}\n", TRACKER.uuid, &"D".repeat(SENDLIMIT-42))));
         assert!(buffer.contains(&format!("{} test_003 *{}\n", TRACKER.uuid, &"D".repeat(1))));
-        // assert!(buffer, format!("X C {}\nX C *{}\n", &"D".repeat(SENDLIMIT-4), &"D".repeat(1)));
         Ok(())
     }
 
     #[test]
-    fn reportop_test_004() -> io::Result<()> {
-        TRACKER.wisk_reportop("test_004", &"D".repeat(SENDLIMIT*2-9));
+    fn report_test_004() -> io::Result<()> {
+        TRACKER.report("test_004", &"D".repeat(SENDLIMIT*2-9));
         println!("FileName: {}", TRACKER.filename);
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
@@ -205,8 +197,8 @@ mod reportop_tests {
     }
 
     #[test]
-    fn reportop_test_005() -> io::Result<()> {
-        TRACKER.wisk_reportop("test_005", &"D".repeat(SENDLIMIT*2-(42*2)));
+    fn report_test_005() -> io::Result<()> {
+        TRACKER.report("test_005", &"D".repeat(SENDLIMIT*2-(42*2)));
         println!("FileName: {}", TRACKER.filename);
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
