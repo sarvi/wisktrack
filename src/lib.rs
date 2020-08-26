@@ -28,8 +28,8 @@ thread_local! {
     static MY_DISPATCH_initialized: ::core::cell::Cell<bool> = false.into();
 }
 thread_local! {
-    static MY_DISPATCH: (Dispatch, WorkerGuard) = {
-        let ret = make_dispatch();
+    static MY_DISPATCH: (bool, Dispatch, WorkerGuard) = {
+        let ret = make_dispatch("WISK_TRACE");
         MY_DISPATCH_initialized.with(|it| it.set(true));
         ret
     };
@@ -266,15 +266,18 @@ fn cfoo() {
         println!("Hello, world! Constructor:\n\tUUID={}", *&tracker::TRACKER.uuid);
         println!("FILE: {:?}", *&tracker::TRACKER.file);
     } else {
-        MY_DISPATCH.with(|(my_dispatch, _guard)| {
-            with_default(&my_dispatch, || {
-                event!(Level::INFO, "cfoo()");
-                event!(Level::INFO, "Hello, world! Constructor:\n\tUUID={}", *&tracker::TRACKER.uuid);
-                // for (key, value) in &*tracker::ENV {
-                //     event!(Level::INFO, "{} = {}", key, value);
-                // }
-                event!(Level::INFO, "FILE: {:?}", *&tracker::TRACKER.file);
-            })
+        MY_DISPATCH.with(|(tracing, my_dispatch, _guard)| {
+            if *tracing {
+                println!("tracing: {}", tracing);
+                with_default(&my_dispatch, || {
+                    event!(Level::INFO, "cfoo()");
+                    event!(Level::INFO, "Hello, world! Constructor:\n\tUUID={}", *&tracker::TRACKER.uuid);
+                    // for (key, value) in &*tracker::ENV {
+                    //     event!(Level::INFO, "{} = {}", key, value);
+                    // }
+                    event!(Level::INFO, "FILE: {:?}", *&tracker::TRACKER.file);
+                })
+            }
         })
     }
 }
