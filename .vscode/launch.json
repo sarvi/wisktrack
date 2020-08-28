@@ -11,15 +11,16 @@
             "cargo": {
                 "args": [
                     "test",
-//                    "--no-run",
-                    "--lib"
+                   "--no-run",
+                    "--lib",
                     "-vvv",
                     "tracker::report_tests::report_test_001"
                 ]
             },
-            "program": "${cargo:program}",
+            // "program": "${cargo:program}",
             "args": [],
-            "env": {"WISK_TRACKFILE": "/ws/sarvi-sjc/wisktrack/wisktrack.pipe"}
+            "env": {"WISK_TRACKFILE": "/ws/sarvi-sjc/wisktrack/wisktrack.data"}
+            // "env": {"WISK_TRACKFILE": "/ws/sarvi-sjc/wisktrack/wisktrack.pipe"}
         },
 
         {
