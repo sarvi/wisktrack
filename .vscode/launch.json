@@ -6,6 +6,24 @@
     "configurations": [
         {
             "type": "lldb",
+            "request": "launch",
+            "name": "Cargo test",
+            "cargo": {
+                "args": [
+                    "test",
+//                    "--no-run",
+                    "--lib"
+                    "-vvv",
+                    "tracker::report_tests::report_test_001"
+                ]
+            },
+            "program": "${cargo:program}",
+            "args": [],
+            "env": {"WISK_TRACKFILE": "/ws/sarvi-sjc/wisktrack/wisktrack.pipe"}
+        },
+
+        {
+            "type": "lldb",
             "request": "custom",
             "name": "Custom launch",
             "targetCreateCommands": [
