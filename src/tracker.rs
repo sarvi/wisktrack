@@ -1,17 +1,17 @@
 use std::mem;
-use std::env;
-use std::ffi::{CString, CStr, OsString};
+use std::{env, ptr};
+use std::ffi::{CStr};
 use std::os::unix::io::FromRawFd;
-use std::sync::Mutex;
+// use std::sync::Mutex;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::fs::{File, OpenOptions, metadata, create_dir_all};
 use std::string::String;
 use std::env::var;
 use std::collections::HashMap;
-use libc::{c_char,c_int, mode_t, O_CREAT};
+use libc::{c_char,c_int, O_CREAT};
 use uuid::Uuid;
-use serde::{Serialize, Deserialize};
+// use serde::{Serialize, Deserialize};
 use base_62;
 use filepath::FilePath;
 
@@ -19,26 +19,9 @@ use filepath::FilePath;
 const SENDLIMIT: usize = 4094;
 // const SENDLIMIT: usize = 100;
 
-type Envar = (String, String);
-
-// #[derive(Serialize, Deserialize, Debug)]
-// pub enum Ops {
-//     CALLS(CString),
-//     PID(CString),
-//     PPID(CString),
-//     PWD(CString),
-//     CMDPATH(CString),
-//     CMD(Vec<CString>),
-//     ENV(Vec<Envar>),
-//     READS(Vec<CString>),
-//     COMPLETE(Vec<CString>),
-//     WRITES(Vec<CString>),
-//     LINKS(Vec<CString,CString>),
-//     CHMODS(Vec<CString>)
-// }
-
 pub struct Tracker {
     pub wsroot: String,
+    pub cwd: String,
     pub filename: String,
     pub file: File,
     pub uuid: String,
@@ -53,6 +36,35 @@ fn fd2path (fd : c_int ) -> PathBuf {
     mem::forget(f); 
     fp
 }
+
+fn path2str (path: PathBuf) -> String {
+    let pathostr = path.into_os_string();
+    pathostr.into_string().unwrap()
+}
+
+unsafe fn cstr2str<'a>(ptr: *const c_char) -> &'a str {
+    CStr::from_ptr(ptr).to_str().unwrap()
+}
+
+unsafe fn pathget(ipath: *const libc::c_char) -> String {
+    String::from(cstr2str(ipath))
+}
+
+unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
+    let ipath = pathget(ipath);
+    if ipath.starts_with("/") {
+        return ipath;
+    }
+    let mut dirpath: PathBuf;
+    if fd >= 0 {
+        dirpath = fd2path(fd);
+    } else {
+        dirpath = PathBuf::from(&TRACKER.cwd);
+    }
+    dirpath.push(ipath);
+    path2str(dirpath)
+}
+
 
 impl Tracker {
     pub fn init() -> Tracker {
@@ -90,20 +102,23 @@ impl Tracker {
                 map.insert(k, v);
             }
         }
+        let cwdostr = env::current_dir().unwrap().into_os_string();
         println!("Track Data: {}", fname);
-        // println!("Ennvironment: {:?}", map.clone().into_iter().collect::<Vec<(String, String)>>());
-        // let mut file = File::create(&filename).unwrap();
-        // wisk_report(file, &PARENT_UUID, "Calls", &UUID);
-        // write!(self.file, "{} Calls \"{}\"", *PARENT_UUID, *UUID).unwrap();
         let tracker = Tracker {
             wsroot : wsroot.to_string(),
             filename : fname.to_string(),
             file : OpenOptions::new().create(true).append(true).open(&fname).unwrap(),
             uuid  : uuid,
             puuid :  puuid,
+            cwd : cwdostr.into_string().unwrap(),
             env : map,
         };
         (&tracker.file).write_all(format!("{} CALLS {}\n", tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap()).as_bytes()).unwrap();
+        (&tracker.file).write_all(format!("{} CWD {}\n", tracker.uuid, serde_json::to_string(&tracker.cwd).unwrap()).as_bytes()).unwrap();
+        (&tracker.file).write_all(format!("{} WSROOT {}\n", tracker.uuid, serde_json::to_string(&tracker.wsroot).unwrap()).as_bytes()).unwrap();
+        let envars:Vec<(String,String)> = env::vars_os().map(|(k,v)| (k.into_string().unwrap(),v.into_string().unwrap()))
+                                                        .collect();
+        (&tracker.file).write_all(format!("{} ENVIRONMENT {}\n", tracker.uuid, serde_json::to_string(&envars).unwrap()).as_bytes()).unwrap();
         tracker
     }
     
@@ -128,7 +143,7 @@ impl Tracker {
         (&self.file).flush().unwrap();
     }
     
-    // pub fn reportop(self: &Self, op: Ops) {
+    // pub fn reportenv(self: &Self,: env====) {
     //     // if let Ops::ENV(ref mut map) = op {
     //     //     for (key, val) in env::vars_os() {
     //     //         if let (Ok(k), Ok(v)) = (key.into_string(), val.into_string()) {
@@ -146,8 +161,58 @@ impl Tracker {
     //     // self.report("ENV", &serialized);
     // }
 
+    pub unsafe fn reportsymlink(self: &Self, target: *const libc::c_char, linkpath: *const libc::c_char) {
+        let args = (cstr2str(target), pathgetabs(linkpath,-1));
+        self.report("LINKS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportsymlinkat(self: &Self, target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) {
+        let args = (cstr2str(target), pathgetabs(linkpath, newdirfd));
+        self.report("LINKS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportlink(self: &Self, oldpath: *const c_char, newpath: *const c_char) {
+        let args = (&pathgetabs(oldpath,-1), &pathgetabs(newpath, -1));
+        self.report("LINKS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportlinkat(self: &Self, olddirfd: c_int, oldpath: *const c_char, newdirfd: c_int, newpath: *const c_char, flags: c_int) {
+        let args = (&pathgetabs(oldpath, olddirfd), &pathgetabs(newpath, newdirfd), flags);
+        self.report("LINKS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportunlink(self: &Self, pathname: *const libc::c_char) {
+        let args = (pathgetabs(pathname,-1),);
+        self.report("UNLINKS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportunlinkat(self: &Self, dirfd: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int) {
+        let args = (pathgetabs(pathname,dirfd),flags);
+        self.report("UNLINKS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportchmod(self: &Self, pathname: *const libc::c_char, mode: libc::mode_t) {
+        let args = (pathgetabs(pathname,-1), mode);
+        self.report("CHMODS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportfchmod(self: &Self, fd: libc::c_int, mode: libc::mode_t) {
+        let args = (path2str(fd2path(fd)),mode);
+        self.report("CHMODS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportfchmodat(self: &Self, dirfd: libc::c_int, pathname: *const libc::c_char, mode: libc::mode_t, flags: libc::c_int) {
+        let args = (pathgetabs(pathname,dirfd),mode,flags);
+        self.report("CHMODS", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportcreat(self: &Self, pathname: *const libc::c_char, mode: libc::mode_t) {
+        let args = (pathgetabs(pathname,-1), mode);
+        self.report("WRITES", &serde_json::to_string(&args).unwrap());
+    }
+
     pub unsafe fn reportfopen(self: &Self, name: *const libc::c_char, mode: *const libc::c_char) {
-        let args = (CStr::from_ptr(name).to_str().unwrap(), CStr::from_ptr(mode).to_str().unwrap());
+        let args = (pathgetabs(name,-1), cstr2str(mode));
         if args.1.contains("w") || args.1.contains("a") {
             self.report("WRITES", &serde_json::to_string(&args).unwrap());
             if args.1.contains("+") {
@@ -163,71 +228,57 @@ impl Tracker {
 
     pub unsafe fn reportopen(self: &Self, pathname: *const libc::c_char, flags: libc::c_int, mode: libc::c_int) {
         if (flags | O_CREAT) == O_CREAT {
-            let args = (CStr::from_ptr(pathname).to_str().unwrap(), flags, mode);
+            let args = (pathgetabs(pathname,-1), flags, mode);
             self.report("OPEN", &serde_json::to_string(&args).unwrap());
         } else {
-            let args = (CStr::from_ptr(pathname).to_str().unwrap(), flags);
+            let args = (pathgetabs(pathname,-1), flags);
             self.report("OPEN", &serde_json::to_string(&args).unwrap());
         }
     }
 
-    pub unsafe fn reportsymlink(self: &Self, target: *const libc::c_char, linkpath: *const libc::c_char) {
-        let args = (CStr::from_ptr(target).to_str().unwrap(), CStr::from_ptr(linkpath).to_str().unwrap());
-        self.report("LINKS", &serde_json::to_string(&args).unwrap());
+    pub unsafe fn reportexecv(self: &Self, path: *const libc::c_char, argv: *const *const libc::c_char) {
+        let mut vargv: Vec<&str> = vec![];
+        for i in 0 .. {
+            let argptr: *const c_char = *(argv.offset(i));
+            if argptr != ptr::null() {
+                vargv.push(cstr2str(argptr))
+            } else {
+                break;
+            }
+        }
+        let args = (pathgetabs(path,-1), vargv);
+        self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 
-    pub unsafe fn reportsymlinkat(self: &Self, target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) {
-        let args = (CStr::from_ptr(target).to_str().unwrap(), newdirfd, CStr::from_ptr(linkpath).to_str().unwrap());
-        self.report("LINKS", &serde_json::to_string(&args).unwrap());
+    pub unsafe fn reportexecvpe(self: &Self, path: *const libc::c_char, argv: *const *const libc::c_char,
+                                env: *const *const libc::c_char) {
+        let mut vargv: Vec<&str> = vec![];
+        let mut venv: Vec<Vec<&str>> = vec![];
+        for i in 0 .. {
+            let argptr: *const c_char = *(argv.offset(i));
+            if argptr != ptr::null() {
+                vargv.push(cstr2str(argptr))
+            } else {
+                break;
+            }
+        }
+        for i in 0 .. {
+            let argptr: *const c_char = *(env.offset(i));
+            if argptr != ptr::null() {
+                venv.push(cstr2str(argptr).splitn(2,"=").collect());
+            } else {
+                break;
+            }
+        }
+        let args = (pathgetabs(path,-1), vargv, venv);
+        self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 
-    pub unsafe fn reportlink(self: &Self, oldpath: *const c_char, newpath: *const c_char) {
-        let args = (CStr::from_ptr(oldpath).to_str().unwrap(), CStr::from_ptr(newpath).to_str().unwrap());
-        self.report("LINKS", &serde_json::to_string(&args).unwrap());
+    pub unsafe fn reportpopen(self: &Self, command: *const libc::c_char, ctype: *const libc::c_char) {
+        let args = ("/bin/sh", cstr2str(command), cstr2str(ctype));
+        self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 
-    pub unsafe fn reportlinkat(self: &Self, olddirfd: c_int, oldpath: *const c_char, newdirfd: c_int, newpath: *const c_char, flags: c_int) {
-        let oldpath = CStr::from_ptr(oldpath).to_str().unwrap();
-        let newpath = CStr::from_ptr(newpath).to_str().unwrap();
-        // let oldpathstr: OsString;
-        // let mut olddirpath: PathBuf;
-        // let oldpath = if oldpath.starts_with("/") {
-        //     oldpath
-        // } else {
-        //     let mut olddirpath = fd2path(olddirfd);
-        //     olddirpath.push(oldpath);
-        //     oldpathstr = olddirpath.into_os_string();
-        //     &oldpathstr.into_string().unwrap()
-        // };
-
-        let args = (olddirfd, oldpath, newdirfd, newpath, flags);
-        self.report("LINKS", &serde_json::to_string(&args).unwrap());
-    }
-
-    pub unsafe fn reportunlink(self: &Self, pathname: *const libc::c_char) {
-        let args = (CStr::from_ptr(pathname).to_str().unwrap(),);
-        self.report("UNLINKS", &serde_json::to_string(&args).unwrap());
-    }
-
-    pub unsafe fn reportunlinkat(self: &Self, dirfd: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int) {
-        let args = (dirfd, CStr::from_ptr(pathname).to_str().unwrap(),flags);
-        self.report("UNLINKS", &serde_json::to_string(&args).unwrap());
-    }
-
-    pub unsafe fn reportchmod(self: &Self, pathname: *const libc::c_char, mode: libc::mode_t) {
-        let args = (CStr::from_ptr(pathname).to_str().unwrap(), mode);
-        self.report("CHMODS", &serde_json::to_string(&args).unwrap());
-    }
-
-    pub unsafe fn reportfchmod(self: &Self, fd: libc::c_int, mode: libc::mode_t) {
-        let args = (fd,mode);
-        self.report("CHMODS", &serde_json::to_string(&args).unwrap());
-    }
-
-    pub unsafe fn reportfchmodat(self: &Self, dirfd: libc::c_int, pathname: *const libc::c_char, mode: libc::mode_t, flags: libc::c_int) {
-        let args = (dirfd, CStr::from_ptr(pathname).to_str().unwrap(),mode,flags);
-        self.report("CHMODS", &serde_json::to_string(&args).unwrap());
-    }
 }
 
 
@@ -239,7 +290,6 @@ lazy_static! {
 #[cfg(test)]
 mod report_tests {
     use std::io;
-    use libc::{opendir, dirfd};
     use super::*;
 
     #[test]
@@ -316,35 +366,155 @@ mod report_tests {
 #[cfg(test)]
 mod reportop_tests {
     use std::io;
+    use std::ffi::{CString};
     use libc::{opendir, dirfd};
     use super::*;
 
     #[test]
     fn test_link() -> io::Result<()> {
         unsafe {
-            TRACKER.reportlink(CString::new("/a/b/link").unwrap().as_ptr(),CString::new("/x/y/z").unwrap().as_ptr());
+            TRACKER.reportlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("/x/y/link").unwrap().as_ptr());
+            TRACKER.reportlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("x/y/link").unwrap().as_ptr());
         }
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/link\",\"/x/y/z\"]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/link\"]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"{}/x/y/link\"]\n", TRACKER.uuid, TRACKER.cwd)));
         assert!(true);
         Ok(())
     }
 
     #[test]
     fn test_linkat() -> io::Result<()> {
-        let fd = unsafe {
+        unsafe {
             let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
-            TRACKER.reportlinkat(fd, CString::new("/a/b/linkat").unwrap().as_ptr(),fd, CString::new("/x/y/z").unwrap().as_ptr(), 300);
-            // TRACKER.reportlinkat(fd, CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/z").unwrap().as_ptr(), 300);
-            fd
+            TRACKER.reportlinkat(fd, CString::new("/a/b/c").unwrap().as_ptr(),fd, CString::new("/x/y/linkat").unwrap().as_ptr(), 300);
+            TRACKER.reportlinkat(fd, CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/linkat").unwrap().as_ptr(), 300);
         };
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} LINKS [{},\"/a/b/linkat\",{},\"/x/y/z\",300]\n", TRACKER.uuid, fd, fd)));
-        // assert!(buffer.contains(&format!("{} LINKS [{},\"/tmp/a/b/c\",{},\"/tmp/x/y/z\",300]\n", TRACKER.uuid, fd, fd)));
+        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/linkat\",300]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} LINKS [\"/tmp/a/b/c\",\"/tmp/x/y/linkat\",300]\n", TRACKER.uuid)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_symlink() -> io::Result<()> {
+        unsafe {
+            TRACKER.reportsymlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("/x/y/symlink").unwrap().as_ptr());
+            TRACKER.reportsymlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("x/y/symlink").unwrap().as_ptr());
+        }
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/symlink\"]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"{}/x/y/symlink\"]\n", TRACKER.uuid, TRACKER.cwd)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_symlinkat() -> io::Result<()> {
+        unsafe {
+            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
+            TRACKER.reportsymlinkat(CString::new("/a/b/c").unwrap().as_ptr(),fd, CString::new("/x/y/symlinkat").unwrap().as_ptr());
+            TRACKER.reportsymlinkat(CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/symlinkat").unwrap().as_ptr());
+        };
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/symlinkat\"]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} LINKS [\"a/b/c\",\"/tmp/x/y/symlinkat\"]\n", TRACKER.uuid)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_unlink() -> io::Result<()> {
+        unsafe {
+            TRACKER.reportunlink(CString::new("/a/b/unlink").unwrap().as_ptr());
+        }
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} UNLINKS [\"/a/b/unlink\"]\n", TRACKER.uuid)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_unlinkat() -> io::Result<()> {
+        unsafe {
+            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
+            TRACKER.reportunlinkat(fd, CString::new("/a/b/unlinkat").unwrap().as_ptr(),300);
+            TRACKER.reportunlinkat(fd, CString::new("a/b/unlinkat").unwrap().as_ptr(),300);
+        };
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} UNLINKS [\"/a/b/unlinkat\",300]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} UNLINKS [\"/tmp/a/b/unlinkat\",300]\n", TRACKER.uuid)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_chmod() -> io::Result<()> {
+        unsafe {
+            TRACKER.reportchmod(CString::new("/a/b/chmod").unwrap().as_ptr(), 0);
+        }
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} CHMODS [\"/a/b/chmod\",0]\n", TRACKER.uuid)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fchmod() -> io::Result<()> {
+        unsafe {
+            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
+            TRACKER.reportfchmod(fd,0);
+        };
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} CHMODS [\"/tmp\",0]\n", TRACKER.uuid)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_fchmodat() -> io::Result<()> {
+        unsafe {
+            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
+            TRACKER.reportfchmodat(fd, CString::new("/a/b/fchmodat").unwrap().as_ptr(),0,0);
+            TRACKER.reportfchmodat(fd, CString::new("a/b/fchmodat").unwrap().as_ptr(),0,0);
+        };
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} CHMODS [\"/a/b/fchmodat\",0,0]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} CHMODS [\"/tmp/a/b/fchmodat\",0,0]\n", TRACKER.uuid)));
+        assert!(true);
+        Ok(())
+    }
+
+    #[test]
+    fn test_creat() -> io::Result<()> {
+        unsafe {
+            TRACKER.reportcreat(CString::new("/a/b/creat").unwrap().as_ptr(),0);
+            TRACKER.reportcreat(CString::new("a/b/creat").unwrap().as_ptr(),0);
+        };
+        let mut rfile = File::open(&TRACKER.filename)?;
+        let mut buffer = String::new();
+        rfile.read_to_string(&mut buffer)?;
+        assert!(buffer.contains(&format!("{} WRITES [\"/a/b/creat\",0]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} WRITES [\"{}/a/b/creat\",0]\n", TRACKER.uuid, TRACKER.cwd)));
         assert!(true);
         Ok(())
     }
@@ -380,105 +550,69 @@ mod reportop_tests {
     }
 
     #[test]
-    fn test_symlink() -> io::Result<()> {
+    fn test_execv() -> io::Result<()> {
+        let argv = vec!["arg1".to_string(), "arg2".to_string(), "arg3".to_string()];
+        let cstr_argv: Vec<_> = argv.iter()
+                                    .map(|arg| CString::new(arg.as_str()).unwrap())
+                                    .collect();
+        let mut p_argv: Vec<_> = cstr_argv.iter() // do NOT into_iter()
+                                          .map(|arg| arg.as_ptr())
+                                          .collect();
+        p_argv.push(std::ptr::null());
         unsafe {
-            TRACKER.reportsymlink(CString::new("/a/b/symlink").unwrap().as_ptr(),CString::new("/x/y/z").unwrap().as_ptr());
+            TRACKER.reportexecv(CString::new("/a/b/execv").unwrap().as_ptr(), p_argv.as_ptr());
+            TRACKER.reportexecv(CString::new("a/b/execv").unwrap().as_ptr(), p_argv.as_ptr());
         }
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/symlink\",\"/x/y/z\"]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} EXECUTES [\"/a/b/execv\",[\"arg1\",\"arg2\",\"arg3\"]]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} EXECUTES [\"{}/a/b/execv\",[\"arg1\",\"arg2\",\"arg3\"]]\n", TRACKER.uuid, TRACKER.cwd)));
         assert!(true);
         Ok(())
     }
 
     #[test]
-    fn test_symlinkat() -> io::Result<()> {
-        let fd = unsafe {
-            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
-            TRACKER.reportsymlinkat(CString::new("/a/b/symlinkat").unwrap().as_ptr(),fd, CString::new("/x/y/z").unwrap().as_ptr());
-            // TRACKER.reportsymlinkat(CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/z").unwrap().as_ptr());
-            fd
-        };
-        let mut rfile = File::open(&TRACKER.filename)?;
-        let mut buffer = String::new();
-        rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} LINKS [\"/a/b/symlinkat\",{},\"/x/y/z\"]\n", TRACKER.uuid, fd)));
-        // assert!(buffer.contains(&format!("{} LINKS [\"/tmp/a/b/c\",{},\"/tmp/x/y/z\"]\n", TRACKER.uuid, fd)));
-        assert!(true);
-        Ok(())
-    }
-
-    #[test]
-    fn test_unlink() -> io::Result<()> {
+    fn test_execvpe() -> io::Result<()> {
+        let args = vec!["arg1".to_string(), "arg2".to_string(), "arg3".to_string()];
+        let env = vec!["A=B".to_string(), "C=D".to_string(), "E=F".to_string()];
+        let cstr_args: Vec<_> = args.iter()
+                                    .map(|arg| CString::new(arg.as_str()).unwrap())
+                                    .collect();
+        let mut p_args: Vec<_> = cstr_args.iter() // do NOT into_iter()
+                                          .map(|arg| arg.as_ptr())
+                                          .collect();
+        p_args.push(std::ptr::null());
+        let cstr_env: Vec<_> = env.iter()
+                                    .map(|arg| CString::new(arg.as_str()).unwrap())
+                                    .collect();
+        let mut p_env: Vec<_> = cstr_env.iter() // do NOT into_iter()
+                                          .map(|arg| arg.as_ptr())
+                                          .collect();
+        p_env.push(std::ptr::null());
         unsafe {
-            TRACKER.reportunlink(CString::new("/a/b/unlink").unwrap().as_ptr());
+            TRACKER.reportexecvpe(CString::new("/a/b/execvpe").unwrap().as_ptr(), p_args.as_ptr(), p_env.as_ptr());
+            TRACKER.reportexecvpe(CString::new("a/b/execvpe").unwrap().as_ptr(), p_args.as_ptr(), p_env.as_ptr());
         }
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} UNLINKS [\"/a/b/unlink\"]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} EXECUTES [\"/a/b/execvpe\",[\"arg1\",\"arg2\",\"arg3\"],[[\"A\",\"B\"],[\"C\",\"D\"],[\"E\",\"F\"]]]\n", TRACKER.uuid)));
+        assert!(buffer.contains(&format!("{} EXECUTES [\"{}/a/b/execvpe\",[\"arg1\",\"arg2\",\"arg3\"],[[\"A\",\"B\"],[\"C\",\"D\"],[\"E\",\"F\"]]]\n", TRACKER.uuid, TRACKER.cwd)));
         assert!(true);
         Ok(())
     }
 
     #[test]
-    fn test_unlinkat() -> io::Result<()> {
-        let fd = unsafe {
-            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
-            TRACKER.reportunlinkat(fd, CString::new("/a/b/unlinkat").unwrap().as_ptr(),300);
-            // TRACKER.reportsymlinkat(CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/z").unwrap().as_ptr());
-            fd
-        };
-        let mut rfile = File::open(&TRACKER.filename)?;
-        let mut buffer = String::new();
-        rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} UNLINKS [{},\"/a/b/unlinkat\",300]\n", TRACKER.uuid, fd)));
-        assert!(true);
-        Ok(())
-    }
-
-    #[test]
-    fn test_chmod() -> io::Result<()> {
+    fn test_popen() -> io::Result<()> {
         unsafe {
-            TRACKER.reportchmod(CString::new("/a/b/chmod").unwrap().as_ptr(), 0);
-        }
-        let mut rfile = File::open(&TRACKER.filename)?;
-        let mut buffer = String::new();
-        rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} CHMODS [\"/a/b/chmod\",0]\n", TRACKER.uuid)));
-        assert!(true);
-        Ok(())
-    }
-
-    #[test]
-    fn test_fchmod() -> io::Result<()> {
-        let fd = unsafe {
-            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
-            TRACKER.reportfchmod(fd,0);
-            // TRACKER.reportsymlinkat(CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/z").unwrap().as_ptr());
-            fd
+            TRACKER.reportpopen(CString::new("echo \"something\"").unwrap().as_ptr(),
+                                CString::new("ctype").unwrap().as_ptr());
         };
         let mut rfile = File::open(&TRACKER.filename)?;
         let mut buffer = String::new();
         rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} CHMODS [{},0]\n", TRACKER.uuid,fd)));
-        assert!(true);
-        Ok(())
-    }
-
-    #[test]
-    fn test_fchmodat() -> io::Result<()> {
-        let fd = unsafe {
-            let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
-            TRACKER.reportfchmodat(fd, CString::new("/a/b/fchmodat").unwrap().as_ptr(),0,0);
-            // TRACKER.reportsymlinkat(CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/z").unwrap().as_ptr());
-            fd
-        };
-        let mut rfile = File::open(&TRACKER.filename)?;
-        let mut buffer = String::new();
-        rfile.read_to_string(&mut buffer)?;
-        assert!(buffer.contains(&format!("{} CHMODS [{},\"/a/b/fchmodat\",0,0]\n", TRACKER.uuid, fd)));
+        assert!(buffer.contains(&format!("{} EXECUTES [\"/bin/sh\",\"echo \\\"something\\\"\",\"ctype\"]\n", TRACKER.uuid)));
         assert!(true);
         Ok(())
     }

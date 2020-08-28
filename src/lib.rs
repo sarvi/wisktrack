@@ -45,6 +45,15 @@ thread_local! {
 //     }
 // }
 
+/* int creat(const char *pathname, mode_t mode); */
+hook! {
+    unsafe fn creat(pathname: *const libc::c_char, mode: libc::mode_t) -> c_int => my_creat {
+        TRACKER.reportcreat(pathname, mode);
+        event!(Level::INFO, "creat({})", CStr::from_ptr(pathname).to_string_lossy());
+        real!(creat)(pathname, mode)
+    }
+}
+
 hook! {
     unsafe fn fopen(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => my_fopen {
         TRACKER.reportfopen(name, mode);
@@ -65,7 +74,6 @@ hook! {
 /* #endif */
 
 /* typedef int (*__libc_open)(const char *pathname, int flags, ...); */
-
 dhook! {
     unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open, orig_open) {
         event!(Level::INFO, "open({}, {}, {})", *&TRACKER.uuid,
@@ -82,8 +90,29 @@ dhook! {
     }
 }
 
-/* typedef int (*__libc_open)(int dirfd, const char *path, int flags, ...); */
+/*
+#ifdef HAVE_OPEN64
+   typedef int (*__libc_open64)(const char *pathname, int flags, ...);
+#endif */
+#[cfg(target_arch = "x86")]
+dhook! {
+    unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open64, orig_open64) {
+        event!(Level::INFO, "open({}, {}, {})", *&TRACKER.uuid,
+               CStr::from_ptr(pathname).to_string_lossy(), flags);
+        if (flags & O_CREAT) == O_CREAT {
+            let mut ap: std::ffi::VaListImpl = args.clone();
+            let mode: c_int = ap.arg::<c_int>();
+            TRACKER.reportopen(pathname,flags,mode);
+            real!(orig_open64)(pathname, flags, mode)
+        } else {
+            TRACKER.reportopen(pathname,flags,0);
+            real!(orig_open64)(pathname, flags)
+        }
+    }
+}
 
+
+/* typedef int (*__libc_openat)(int dirfd, const char *path, int flags, ...); */
 vhook! {
     unsafe fn vopenat(args: std::ffi::VaList, dirfd: c_int, path: *const c_char, flags: c_int ) -> c_int => my_vopenat {
         event!(Level::INFO, "vopenat({}, {}, {})", dirfd, CStr::from_ptr(path).to_string_lossy(), flags);
@@ -105,10 +134,6 @@ dhook! {
 
 /* 
 typedef int (*__libc_fcntl)(int fd, int cmd, ...);
-#ifdef HAVE_OPEN64
-typedef int (*__libc_open64)(const char *pathname, int flags, ...);
-#endif /* HAVE_OPEN64 */
-typedef int (*__libc_openat)(int dirfd, const char *path, int flags, ...);
 //typedef int (*__libc_execl)(const char *path, char *const arg, ...);
 //typedef int (*__libc_execlp)(const char *file, char *const arg, ...);
 //typedef int (*__libc_execlpe)(const char *path, const char *arg,..., char * const envp[]);
@@ -119,8 +144,8 @@ typedef int (*__libc_openat)(int dirfd, const char *path, int flags, ...);
 
  hook! {
     unsafe fn execv(path: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => my_execv {
-        // TRACKER.reportexecv(path, argv);
-        event!(Level::INFO, "open({})", CStr::from_ptr(path).to_string_lossy());
+        TRACKER.reportexecv(path, argv);
+        event!(Level::INFO, "execv({})", CStr::from_ptr(path).to_string_lossy());
         real!(execv)(path, argv)
     }
 }
@@ -129,8 +154,8 @@ typedef int (*__libc_openat)(int dirfd, const char *path, int flags, ...);
 
 hook! {
     unsafe fn execvp(file: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => my_execvp {
-        // TRACKER.reportexecvp(file, argv);
-        event!(Level::INFO, "open({})", CStr::from_ptr(file).to_string_lossy());
+        TRACKER.reportexecv(file, argv);
+        event!(Level::INFO, "execvp({})", CStr::from_ptr(file).to_string_lossy());
         real!(execvp)(file, argv)
     }
 }
@@ -140,8 +165,8 @@ hook! {
 hook! {
     unsafe fn execvpe(file: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execvpe {
-        // TRACKER.reportexecvpe(file, argv, envp);
-        event!(Level::INFO, "open({})", CStr::from_ptr(file).to_string_lossy());
+        TRACKER.reportexecvpe(file, argv, envp);
+        event!(Level::INFO, "execvpe({})", CStr::from_ptr(file).to_string_lossy());
         real!(execvpe)(file, argv, envp)
     }
 }
@@ -200,7 +225,7 @@ hook! {
 
 hook! {
     unsafe fn popen(command: *const libc::c_char, ctype: *const libc::c_char) -> *const libc::FILE => my_popen {
-        // TRACKER.reportpopen(command, ctype);
+        TRACKER.reportpopen(command, ctype);
         event!(Level::INFO, "popen({})", CStr::from_ptr(command).to_string_lossy());
         real!(popen)(command, ctype)
     }
@@ -292,7 +317,7 @@ hook! {
 
 vhook! {
     unsafe fn vprintf(args: std::ffi::VaList, format: *const c_char ) -> c_int => my_vprintf {
-        // event!(Level::INFO, "vprintf({})", CStr::from_ptr(format).to_string_lossy());
+        event!(Level::INFO, "vprintf({})", CStr::from_ptr(format).to_string_lossy());
         real!(vprintf)(format, args)
     }
 }
