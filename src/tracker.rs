@@ -9,7 +9,7 @@ use std::fs::{File, OpenOptions, metadata, create_dir_all};
 use std::string::String;
 use std::env::var;
 use std::collections::HashMap;
-use libc::{c_char,c_int, mode_t};
+use libc::{c_char,c_int, mode_t, O_CREAT};
 use uuid::Uuid;
 use serde::{Serialize, Deserialize};
 use base_62;
@@ -158,6 +158,16 @@ impl Tracker {
             if args.1.contains("+") {
                 self.report("WRITES", &serde_json::to_string(&args).unwrap());
             }
+        }
+    }
+
+    pub unsafe fn reportopen(self: &Self, pathname: *const libc::c_char, flags: libc::c_int, mode: libc::c_int) {
+        if (flags | O_CREAT) == O_CREAT {
+            let args = (CStr::from_ptr(pathname).to_str().unwrap(), flags, mode);
+            self.report("OPEN", &serde_json::to_string(&args).unwrap());
+        } else {
+            let args = (CStr::from_ptr(pathname).to_str().unwrap(), flags);
+            self.report("OPEN", &serde_json::to_string(&args).unwrap());
         }
     }
 

@@ -18,7 +18,7 @@ use core::cell::Cell;
 use ctor::{ctor, dtor};
 // use tracing::instrument;
 use tracing::{Level, event, };
-use libc::{c_char,c_int};
+use libc::{c_char,c_int,O_CREAT};
 use tracing::dispatcher::{with_default, Dispatch};
 use tracing_appender::non_blocking::WorkerGuard;
 use redhook::ld_preload::make_dispatch;
@@ -64,11 +64,47 @@ hook! {
 }
 /* #endif */
 
+/* typedef int (*__libc_open)(const char *pathname, int flags, ...); */
+
+dhook! {
+    unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open, orig_open) {
+        event!(Level::INFO, "open({}, {}, {})", *&TRACKER.uuid,
+               CStr::from_ptr(pathname).to_string_lossy(), flags);
+        if (flags & O_CREAT) == O_CREAT {
+            let mut ap: std::ffi::VaListImpl = args.clone();
+            let mode: c_int = ap.arg::<c_int>();
+            TRACKER.reportopen(pathname,flags,mode);
+            real!(orig_open)(pathname, flags, mode)
+        } else {
+            TRACKER.reportopen(pathname,flags,0);
+            real!(orig_open)(pathname, flags)
+        }
+    }
+}
+
+/* typedef int (*__libc_open)(int dirfd, const char *path, int flags, ...); */
+
+vhook! {
+    unsafe fn vopenat(args: std::ffi::VaList, dirfd: c_int, path: *const c_char, flags: c_int ) -> c_int => my_vopenat {
+        event!(Level::INFO, "vopenat({}, {}, {})", dirfd, CStr::from_ptr(path).to_string_lossy(), flags);
+        real!(vopenat)(dirfd, path, flags, args)
+    }
+}
+
+
+dhook! {
+    unsafe fn openat(args: std::ffi::VaListImpl, dirfd: c_int, path: *const c_char, flags: c_int ) -> c_int => my_openat {
+        event!(Level::INFO, "openat({}, {}, {}, {})", *&TRACKER.uuid,
+               dirfd, CStr::from_ptr(path).to_string_lossy(), flags);
+        let mut aq: std::ffi::VaListImpl;
+        aq  =  args.clone();
+        my_vopenat(dirfd, path, flags, aq.as_va_list())
+    }
+}
 
 
 /* 
 typedef int (*__libc_fcntl)(int fd, int cmd, ...);
-typedef int (*__libc_open)(const char *pathname, int flags, ...);
 #ifdef HAVE_OPEN64
 typedef int (*__libc_open64)(const char *pathname, int flags, ...);
 #endif /* HAVE_OPEN64 */
@@ -314,9 +350,9 @@ mod libtests {
         // Statements here are executed when the compiled binary is called
 
         // Print text to the console
-        let file = CString::new("/tmp/file1").expect("CString::new failed");
+        let file = CString::new("/tmp/file1 %d\n").expect("CString::new failed");
         unsafe {
-            printf(file.as_ptr());
+            printf(file.as_ptr(), 0);
             chmod(file.as_ptr(), 0);
         }
     }
