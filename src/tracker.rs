@@ -32,7 +32,7 @@ pub struct Tracker {
 fn fd2path (fd : c_int ) -> PathBuf {
     let f = unsafe { File::from_raw_fd(fd) };
     let fp = f.path().unwrap();
-    println!("{}",fp.as_path().to_str().unwrap());
+    // println!("{}",fp.as_path().to_str().unwrap());
     mem::forget(f); 
     fp
 }
@@ -123,7 +123,7 @@ impl Tracker {
             }
         }
         let cwdostr = env::current_dir().unwrap().into_os_string();
-        println!("Track Data: {}", fname);
+        // println!("Track Data: {}", fname);
         let tracker = Tracker {
             wsroot : wsroot.to_string(),
             filename : fname.to_string(),
@@ -148,12 +148,12 @@ impl Tracker {
         let mut lenleft = value.len();
         let mut ind = 0;
         let mut contin = "";
-        println!("{} op={} value={}", self.uuid, op, value);
+        // println!("{} op={} value={}", self.uuid, op, value);
         while lenleft != 0 {
             let max = if lenleft > availen {lenleft = lenleft - availen; ind + availen } 
                     else { let x=lenleft; lenleft = 0; ind + x };
-            println!("minlen={} valeft={} ind={} max={}\n{} {} {}", minlen, lenleft, ind, max,
-                    self.uuid, op, contin);
+            // println!("minlen={} valeft={} ind={} max={}\n{} {} {}", minlen, lenleft, ind, max,
+            //         self.uuid, op, contin);
             (&self.file).write_all(format!("{} {} {}{}\n", self.uuid, op, contin, &value[ind..max]).as_bytes()).unwrap();
             contin = "*";
             ind = max ;
