@@ -52,29 +52,40 @@ unsafe fn pathget(ipath: *const libc::c_char) -> String {
 
 unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
     let ipath = pathget(ipath);
-    if ipath.starts_with("/") {
-        return ipath;
-    }
-    let mut dirpath: PathBuf;
-    if fd >= 0 {
-        dirpath = fd2path(fd);
+    let ipath = if ipath.starts_with("/") {
+        ipath
     } else {
-        dirpath = PathBuf::from(&TRACKER.cwd);
+        let mut dirpath: PathBuf;
+        if fd >= 0 {
+            dirpath = fd2path(fd);
+        } else {
+            dirpath = PathBuf::from(&TRACKER.cwd);
+        }
+        dirpath.push(ipath);
+        path2str(dirpath)
+    };
+    if ipath.starts_with(&TRACKER.wsroot) {
+        ipath.replacen(&TRACKER.wsroot,"",1)
+    } else {
+        ipath
     }
-    dirpath.push(ipath);
-    path2str(dirpath)
 }
 
 
 impl Tracker {
     pub fn init() -> Tracker {
         let wsroot:String = match env::var("WISK_WSROOT") {
-            Ok(wsroot) => wsroot,
-            Err(_) => String::from("/tmp")
+            Ok(mut wsroot) => {
+                if !wsroot.ends_with("/") {
+                    wsroot.push_str("/")
+                }
+                if !Path::new(&wsroot).exists() {
+                    create_dir_all(&wsroot).unwrap();
+                }
+                wsroot
+            },
+            Err(_) => String::new(),
         };
-        if !Path::new(&wsroot).exists() {
-            create_dir_all(&wsroot).unwrap();
-        }
         let puuid:String = match env::var("WISK_UUID") {
             Ok(uuid) => uuid,
             Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
@@ -82,7 +93,16 @@ impl Tracker {
         let uuid:String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
         let fname = match var("WISK_TRACKFILE") {
             Ok(v) => v,
-            Err(_) => String::from(format!("{}/wisktrack/track.{}", wsroot, uuid)),
+            Err(_) => {
+                if wsroot.is_empty() {
+                    if !Path::new("/tmp/wisktrack").exists() {
+                        create_dir_all("/tmp/wisktrack").unwrap();
+                    }
+                    String::from(format!("/tmp/wisktrack/track.{}", uuid))
+                } else {
+                    String::from(format!("{}/wisktrack/track.{}", wsroot, uuid))
+                }
+            },
         };
         if !Path::new(&fname).parent().unwrap().exists() {
             create_dir_all(Path::new(&fname).parent().unwrap()).unwrap();
