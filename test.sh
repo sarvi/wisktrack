@@ -4,29 +4,30 @@ preload () {
     local library
     library=$1
     shift
-    export RUST_BACKTRACE=full
     if [ "$(uname)" = "Darwin" ]; then
-        DYLD_INSERT_LIBRARIES=target/debug/"$library".dylib "$@"
+        WISK_TRACE=/tmp/wisk_trace.log DYLD_INSERT_LIBRARIES=target/debug/"$library".dylib "$@"
     else
-        LD_PRELOAD=target/debug/"$library".so "$@"
+        WISK_TRACE=/tmp/wisk_trace.log LD_PRELOAD=target/debug/"$library".so "$@"
+        # LD_PRELOAD=target/debug/"$library".so "$@"
     fi
 }
 
 set -ex
 set -o pipefail
-# export RUST_BACKTRACE=1
-preload libwisktrack ls -l /dev/stdin | grep readlink
 
-ln -s dummy test-panic
-preload libwisktrack ls -l test-panic
-rm test-panic
+# cargo clean
+# cargo update
+cargo build
+cc -Werror -o tests/testprog tests/test.c || exit "Testprog Compile Error"
+rm -f /tmp/wisk_trace.log
+touch /tmp/wisk_testfile
+ln -sf /tmp/wisk_testfile /tmp/wisk_testlink
+printf "\n\nRUST LD_PRELOAD"
 
-touch dummy
-ln dummy linkdummy
-preload libwisktrack ls -l linkdummy
-rm linkdummy dummy
+preload libwisktrack ./tests/testprog creat-cw || exit
+preload libwisktrack ./tests/testprog creat-r || exit
 
+preload libwisktrack ./tests/testprog openat-cw || exit
+preload libwisktrack ./tests/testprog openat-r || exit
 
-touch test.x
-preload libwisktrack chmod a+rwx test.x
-rm test.x
+test -f /tmp/wisk_trace.log && cat /tmp/wisk_trace.log
