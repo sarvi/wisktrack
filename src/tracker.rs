@@ -15,6 +15,11 @@ use uuid::Uuid;
 // use serde::{Serialize, Deserialize};
 use base_62;
 use filepath::FilePath;
+use tracing::dispatcher::{with_default, Dispatch};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing::{Level, event, };
+use redhook::ld_preload::make_dispatch;
+
 
 
 const SENDLIMIT: usize = 4094;
@@ -74,75 +79,84 @@ unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
 }
 
 
+
 impl Tracker {
     pub fn init() -> Tracker {
-        let wsroot:String = match env::var("WISK_WSROOT") {
-            Ok(mut wsroot) => {
-                if !wsroot.ends_with("/") {
-                    wsroot.push_str("/")
+        MY_DISPATCH.with(|(_tracing, my_dispatch, _guard)| {
+            with_default(&my_dispatch, || {
+                event!(Level::INFO, "Tracker Initialization:\n");
+                let wsroot:String = match env::var("WISK_WSROOT") {
+                    Ok(mut wsroot) => {
+                        if !wsroot.ends_with("/") {
+                            wsroot.push_str("/")
+                        }
+                        if !Path::new(&wsroot).exists() {
+                            create_dir_all(&wsroot).unwrap();
+                        }
+                        wsroot
+                    },
+                    Err(_) => String::new(),
+                };
+                let puuid:String = match env::var("WISK_UUID") {
+                    Ok(uuid) => uuid,
+                    Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
+                };
+                let uuid:String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
+                let fname = match var("WISK_TRACKFILE") {
+                    Ok(v) => v,
+                    Err(_) => {
+                        if wsroot.is_empty() {
+                            if !Path::new("/tmp/wisktrack").exists() {
+                                create_dir_all("/tmp/wisktrack").unwrap();
+                            }
+                            String::from(format!("/tmp/wisktrack/track.{}", uuid))
+                        } else {
+                            String::from(format!("{}/wisktrack/track.{}", wsroot, uuid))
+                        }
+                    },
+                };
+                if !Path::new(&fname).parent().unwrap().exists() {
+                    create_dir_all(Path::new(&fname).parent().unwrap()).unwrap();
                 }
-                if !Path::new(&wsroot).exists() {
-                    create_dir_all(&wsroot).unwrap();
+                let trackdir = Path::new(&fname).parent().unwrap();
+                if !metadata(&trackdir).unwrap().is_dir() {
+                    create_dir_all(trackdir).unwrap();
                 }
-                wsroot
-            },
-            Err(_) => String::new(),
-        };
-        let puuid:String = match env::var("WISK_UUID") {
-            Ok(uuid) => uuid,
-            Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
-        };
-        let uuid:String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
-        let fname = match var("WISK_TRACKFILE") {
-            Ok(v) => v,
-            Err(_) => {
-                if wsroot.is_empty() {
-                    if !Path::new("/tmp/wisktrack").exists() {
-                        create_dir_all("/tmp/wisktrack").unwrap();
+                let fname = if Path::new(&fname).exists() && metadata(&fname).unwrap().is_dir() {
+                    String::from(format!("{}/wisk_track.{}", fname, uuid))
+                } else { String::from(&fname) };
+
+                let mut map = HashMap::new();
+                for (key, val) in env::vars_os() {
+                    // Use pattern bindings instead of testing .is_some() followed by .unwrap()
+                    if let (Ok(k), Ok(v)) = (key.into_string(), val.into_string()) {
+                        map.insert(k, v);
                     }
-                    String::from(format!("/tmp/wisktrack/track.{}", uuid))
-                } else {
-                    String::from(format!("{}/wisktrack/track.{}", wsroot, uuid))
                 }
-            },
-        };
-        if !Path::new(&fname).parent().unwrap().exists() {
-            create_dir_all(Path::new(&fname).parent().unwrap()).unwrap();
-        }
-        let trackdir = Path::new(&fname).parent().unwrap();
-        if !metadata(&trackdir).unwrap().is_dir() {
-            create_dir_all(trackdir).unwrap();
-        }
-        let fname = if Path::new(&fname).exists() && metadata(&fname).unwrap().is_dir() {
-            String::from(format!("{}/wisk_track.{}", fname, uuid))
-        } else { String::from(&fname) };
- 
-        let mut map = HashMap::new();
-        for (key, val) in env::vars_os() {
-            // Use pattern bindings instead of testing .is_some() followed by .unwrap()
-            if let (Ok(k), Ok(v)) = (key.into_string(), val.into_string()) {
-                map.insert(k, v);
-            }
-        }
-        let cwdostr = env::current_dir().unwrap().into_os_string();
-        // println!("Track Data: {}", fname);
-        let tracker = Tracker {
-            wsroot : wsroot.to_string(),
-            filename : fname.to_string(),
-            file : OpenOptions::new().create(true).append(true).open(&fname).unwrap(),
-            uuid  : uuid,
-            puuid :  puuid,
-            pid: process::id().to_string(),
-            cwd : cwdostr.into_string().unwrap(),
-            env : map,
-        };
-        (&tracker.file).write_all(format!("{} CALLS {}\n", tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap()).as_bytes()).unwrap();
-        (&tracker.file).write_all(format!("{} CWD {}\n", tracker.uuid, serde_json::to_string(&tracker.cwd).unwrap()).as_bytes()).unwrap();
-        (&tracker.file).write_all(format!("{} WSROOT {}\n", tracker.uuid, serde_json::to_string(&tracker.wsroot).unwrap()).as_bytes()).unwrap();
-        let envars:Vec<(String,String)> = env::vars_os().map(|(k,v)| (k.into_string().unwrap(),v.into_string().unwrap()))
-                                                        .collect();
-        (&tracker.file).write_all(format!("{} ENVIRONMENT {}\n", tracker.uuid, serde_json::to_string(&envars).unwrap()).as_bytes()).unwrap();
-        tracker
+                let cwdostr = env::current_dir().unwrap().into_os_string();
+                // println!("Track Data: {}", fname);
+                let tracker = Tracker {
+                    wsroot : wsroot.to_string(),
+                    filename : fname.to_string(),
+                    file : OpenOptions::new().create(true).append(true).open(&fname).unwrap(),
+                    uuid  : uuid,
+                    puuid :  puuid,
+                    pid: process::id().to_string(),
+                    cwd : cwdostr.into_string().unwrap(),
+                    env : map,
+                };
+                (&tracker.file).write_all(format!("{} CALLS {}\n", tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap()).as_bytes()).unwrap();
+                (&tracker.file).write_all(format!("{} CWD {}\n", tracker.uuid, serde_json::to_string(&tracker.cwd).unwrap()).as_bytes()).unwrap();
+                (&tracker.file).write_all(format!("{} WSROOT {}\n", tracker.uuid, serde_json::to_string(&tracker.wsroot).unwrap()).as_bytes()).unwrap();
+                let envars:Vec<(String,String)> = env::vars_os().map(|(k,v)| (k.into_string().unwrap(),v.into_string().unwrap()))
+                                                                .collect();
+                (&tracker.file).write_all(format!("{} ENVIRONMENT {}\n", tracker.uuid, serde_json::to_string(&envars).unwrap()).as_bytes()).unwrap();
+                event!(Level::INFO, "Tracker Initialization Complete: {} CALLS {}, WSROOT: {}, CWD: {}",
+                       tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap(), serde_json::to_string(&tracker.cwd).unwrap(),
+                       serde_json::to_string(&tracker.wsroot).unwrap());
+                tracker
+            })
+        })
     }
     
     pub fn report(self: &Self, op : &str, value: &str) {
@@ -308,6 +322,21 @@ impl Tracker {
     }
 
 }
+
+thread_local! {
+    #[allow(nonstandard_style)]
+    pub static MY_DISPATCH_initialized: ::core::cell::Cell<bool> = false.into();
+}
+
+thread_local! {
+    pub static MY_DISPATCH: (bool, Dispatch, WorkerGuard) = {
+        let ret = make_dispatch("WISK_TRACE");
+        MY_DISPATCH_initialized.with(|it| it.set(true));
+        ret
+    };
+}
+
+
 
 
 lazy_static! {

@@ -14,8 +14,8 @@ extern crate backtrace;
 
 mod tracker;
 
-use tracker::TRACKER;
-use backtrace::Backtrace;
+use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER};
+// use backtrace::Backtrace;
 use std::ffi::CStr;
 use core::cell::Cell;
 use ctor::{ctor, dtor};
@@ -23,24 +23,9 @@ use paste::paste;
 // use tracing::instrument;
 use tracing::{Level, event, };
 use libc::{c_char,c_int,O_CREAT,SYS_readlink};
-use tracing::dispatcher::{with_default, Dispatch};
-use tracing_appender::non_blocking::WorkerGuard;
-use redhook::ld_preload::make_dispatch;
-use redhook::debug;
+use tracing::dispatcher::with_default;
+// use redhook::debug;
 
-
-
-thread_local! {
-    #[allow(nonstandard_style)]
-    static MY_DISPATCH_initialized: ::core::cell::Cell<bool> = false.into();
-}
-thread_local! {
-    static MY_DISPATCH: (bool, Dispatch, WorkerGuard) = {
-        let ret = make_dispatch("WISK_TRACE");
-        MY_DISPATCH_initialized.with(|it| it.set(true));
-        ret
-    };
-}
 
 
 shook! {
@@ -356,15 +341,15 @@ fn cfoo() {
             if *tracing {
                 // print(format_args!("tracing: {}", tracing));
                 with_default(&my_dispatch, || {
-                    event!(Level::INFO, "Constructor(cfoo):\n");
-                    // event!(Level::INFO, "Constructor(cfoo):\n\tUUID: {},\tFILE: {:?}",
-                    //        *&TRACKER.uuid, *&TRACKER.file);
+                    event!(Level::INFO, "Constructor(cfoo):\n\tUUID: {},\tFILE: {:?}",
+                           *&TRACKER.uuid, *&TRACKER.file);
+                    real!(readlink);
+                    redhook::initialize();
+                    event!(Level::INFO, "Constructor(cfoo): Complete\n");
                 })
             }
         });
     // }
-    real!(readlink);
-    redhook::initialize();
 }
 
 #[dtor]
