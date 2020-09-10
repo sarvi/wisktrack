@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::fs::{File, OpenOptions, metadata, create_dir_all};
 use std::string::String;
 use std::env::var;
+use std::process;
 use std::collections::HashMap;
 use libc::{c_char,c_int, O_CREAT};
 use uuid::Uuid;
@@ -26,6 +27,7 @@ pub struct Tracker {
     pub file: File,
     pub uuid: String,
     pub puuid: String,
+    pub pid: String,
     pub env : HashMap<String, String>,
 }
 
@@ -130,6 +132,7 @@ impl Tracker {
             file : OpenOptions::new().create(true).append(true).open(&fname).unwrap(),
             uuid  : uuid,
             puuid :  puuid,
+            pid: process::id().to_string(),
             cwd : cwdostr.into_string().unwrap(),
             env : map,
         };
@@ -180,6 +183,11 @@ impl Tracker {
     //     }
     //     // self.report("ENV", &serialized);
     // }
+
+    pub unsafe fn reportreadlink(self: &Self, path: *const libc::c_char) {
+        let args = (&pathgetabs(path,-1), );
+        self.report("READLINK", &serde_json::to_string(&args).unwrap());
+    }
 
     pub unsafe fn reportsymlink(self: &Self, target: *const libc::c_char, linkpath: *const libc::c_char) {
         let args = (cstr2str(target), pathgetabs(linkpath,-1));
