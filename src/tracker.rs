@@ -10,7 +10,7 @@ use std::string::String;
 use std::env::var;
 use std::process;
 use std::collections::HashMap;
-use libc::{c_char,c_int, O_CREAT};
+use libc::{c_char,c_int, O_CREAT, AT_FDCWD};
 use uuid::Uuid;
 // use serde::{Serialize, Deserialize};
 use base_62;
@@ -65,6 +65,8 @@ unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
         let mut dirpath: PathBuf;
         if fd >= 0 {
             dirpath = fd2path(fd);
+        } else if fd == AT_FDCWD {
+            dirpath = PathBuf::from(&TRACKER.cwd);
         } else {
             dirpath = PathBuf::from(&TRACKER.cwd);
         }
