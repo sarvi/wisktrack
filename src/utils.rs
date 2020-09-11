@@ -3,6 +3,7 @@ use std::ffi::{CStr, CString};
 use std::{env, ptr};
 use libc::{c_char};
 use std::collections::HashMap;
+use tracing::{Level, event};
 
 pub fn vcstr2vecptr(vcstr: &Vec<CString>) -> Vec<*const c_char> {
     let vecptr: Vec<_> = vcstr.iter() // do NOT into_iter()
@@ -32,7 +33,8 @@ pub fn cpptr2hashmap(vecptr: *const *const libc::c_char) -> HashMap<String,Strin
         unsafe {
             let argptr: *const c_char = *(vecptr.offset(i));
             if argptr != ptr::null() {
-                let kv:Vec<&str> = CStr::from_ptr(argptr).to_str().unwrap().splitn(1,"=").collect();
+                let kv:Vec<&str> = CStr::from_ptr(argptr).to_str().unwrap().splitn(2,'=').collect();
+                let t = CStr::from_ptr(argptr).to_str().unwrap();
                 hash.insert(kv[0].to_string(), kv[1].to_string());
             } else {
                 break;

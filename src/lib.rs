@@ -91,7 +91,7 @@ dhook! {
 #[cfg(target_arch = "x86")]
 dhook! {
     unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => my_open64 {
-        print(format_args!("open64()\n"));
+        // print(format_args!("open64()\n"));
         // event!(Level::INFO, "open({}, {}, {})", *&TRACKER.uuid,
         //        CStr::from_ptr(pathname).to_string_lossy(), flags);
         if (flags & O_CREAT) == O_CREAT {
@@ -181,7 +181,7 @@ hook! {
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         let envcstr = utils::hashmap2vcstr(&env);
-        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        event!(Level::INFO,"execvpe: Updated Env {:?}", env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         real!(execvpe)(file, argv, envp.as_ptr())
@@ -196,11 +196,11 @@ hook! {
     unsafe fn execve(pathname: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execve {
         TRACKER.reportexecvpe(pathname, argv, envp);
-        event!(Level::INFO, "open({})", CStr::from_ptr(pathname).to_string_lossy());
+        event!(Level::INFO, "execve({})", CStr::from_ptr(pathname).to_string_lossy());
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         let envcstr = utils::hashmap2vcstr(&env);
-        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        event!(Level::INFO,"execve: Updated Env {:?}", env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         real!(execve)(pathname, argv, envp.as_ptr())
@@ -216,11 +216,11 @@ hook! {
                        argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execveat {
         TRACKER.reportexecvpe(pathname, argv, envp);
         // TRACKER.reportexecveat(dirfd, pathname, argv, envp);
-        event!(Level::INFO, "open({})", CStr::from_ptr(pathname).to_string_lossy());
+        event!(Level::INFO, "execveat({})", CStr::from_ptr(pathname).to_string_lossy());
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         let envcstr = utils::hashmap2vcstr(&env);
-        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        event!(Level::INFO,"execveat: Updated Env {:?}", env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         real!(execveat)(dirfd, pathname, argv, envp.as_ptr())
@@ -239,7 +239,7 @@ hook! {
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         let envcstr = utils::hashmap2vcstr(&env);
-        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        event!(Level::INFO,"posix_spawn: Updated Env {:?}", env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         real!(posix_spawn)(pid, path, file_actions, attrp, argv, envp.as_ptr())
@@ -253,11 +253,11 @@ hook! {
     unsafe fn posix_spawnp(pid: *mut libc::pid_t, file: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_posix_spawnp {
         // TRACKER.reportposix_spawnp(pid, file, file_actions, attrp, argv, envp);
-        event!(Level::INFO, "open({})", CStr::from_ptr(file).to_string_lossy());
+        event!(Level::INFO, "posix_spawnp({})", CStr::from_ptr(file).to_string_lossy());
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         let envcstr = utils::hashmap2vcstr(&env);
-        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        event!(Level::INFO,"posix_spawnp: Updated Env {:?}", env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         real!(posix_spawnp)(pid, file, file_actions, attrp, argv, envp.as_ptr())
