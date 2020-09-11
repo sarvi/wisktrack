@@ -1,6 +1,6 @@
 use std::mem;
 use std::{env, ptr};
-use std::ffi::{CStr};
+use std::ffi::{CStr, OsString};
 use std::os::unix::io::FromRawFd;
 // use std::sync::Mutex;
 use std::io::prelude::*;
@@ -25,6 +25,8 @@ use redhook::ld_preload::make_dispatch;
 const SENDLIMIT: usize = 4094;
 // const SENDLIMIT: usize = 100;
 
+const WISK_FIELDS: &'static [&'static str] = &["WISK_TRACEFILE", "WISK_TRACKFILE", "WISK_PUUID", "WISK_WSROOT"];
+
 pub struct Tracker {
     pub wsroot: String,
     pub cwd: String,
@@ -34,6 +36,7 @@ pub struct Tracker {
     pub puuid: String,
     pub pid: String,
     pub env : HashMap<String, String>,
+    pub wiskfields : Vec<(String, String)>,
 }
 
 fn fd2path (fd : c_int ) -> PathBuf {
@@ -99,7 +102,7 @@ impl Tracker {
                     },
                     Err(_) => String::new(),
                 };
-                let puuid:String = match env::var("WISK_UUID") {
+                let puuid:String = match env::var("WISK_PUUID") {
                     Ok(uuid) => uuid,
                     Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
                 };
@@ -131,10 +134,17 @@ impl Tracker {
                 let mut map = HashMap::new();
                 for (key, val) in env::vars_os() {
                     // Use pattern bindings instead of testing .is_some() followed by .unwrap()
-                    if let (Ok(k), Ok(v)) = (key.into_string(), val.into_string()) {
-                        map.insert(k, v);
+                    if let Ok(k) = key.into_string() {
+                        map.insert(k, val.into_string().unwrap());
                     }
                 }
+                let mut wiskmap: Vec<(String,String)> = WISK_FIELDS.iter()
+                                                               .filter_map(|k| {match env::var_os(k) {
+                                                                   Some(val) => Some(((*k).to_owned(), val.into_string().unwrap())),
+                                                                   None => None,
+                                                               }})
+                                                               .collect();
+                wiskmap.push(("WISK_PUUID".to_string(), uuid.to_string()));
                 let cwdostr = env::current_dir().unwrap().into_os_string();
                 // println!("Track Data: {}", fname);
                 let tracker = Tracker {
@@ -146,6 +156,7 @@ impl Tracker {
                     pid: process::id().to_string(),
                     cwd : cwdostr.into_string().unwrap(),
                     env : map,
+                    wiskfields : wiskmap,
                 };
                 (&tracker.file).write_all(format!("{} CALLS {}\n", tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap()).as_bytes()).unwrap();
                 (&tracker.file).write_all(format!("{} CWD {}\n", tracker.uuid, serde_json::to_string(&tracker.cwd).unwrap()).as_bytes()).unwrap();
@@ -677,4 +688,3 @@ mod reportop_tests {
     }
 
 }
-

@@ -1,4 +1,5 @@
 #![feature(c_variadic)]
+
 #[macro_use]
 extern crate redhook;
 extern crate core;
@@ -13,7 +14,9 @@ extern crate tracing_subscriber;
 extern crate backtrace;
 
 mod tracker;
+mod utils;
 
+use std::{env, ptr};
 use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER};
 // use backtrace::Backtrace;
 use std::ffi::CStr;
@@ -24,7 +27,7 @@ use paste::paste;
 use tracing::{Level, event, };
 use libc::{c_char,c_int,O_CREAT,SYS_readlink};
 use tracing::dispatcher::with_default;
-// use redhook::debug;
+use redhook::debug;
 
 
 
@@ -140,7 +143,14 @@ typedef int (*__libc_fcntl)(int fd, int cmd, ...);
     unsafe fn execv(path: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => my_execv {
         TRACKER.reportexecv(path, argv);
         event!(Level::INFO, "execv({})", CStr::from_ptr(path).to_string_lossy());
-        real!(execv)(path, argv)
+        let mut env = utils::envgetcurrent();
+        utils::envupdate(&mut env,&TRACKER.wiskfields);
+        let envcstr = utils::hashmap2vcstr(&env);
+        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(execve)(path, argv, envp.as_ptr())
+        // real!(execv)(path, argv)
     }
 }
 
@@ -149,8 +159,15 @@ typedef int (*__libc_fcntl)(int fd, int cmd, ...);
 hook! {
     unsafe fn execvp(file: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => my_execvp {
         TRACKER.reportexecv(file, argv);
-        event!(Level::INFO, "execvp({})", CStr::from_ptr(file).to_string_lossy());
-        real!(execvp)(file, argv)
+        event!(Level::INFO, "execvp({})", CStr::from_ptr(file).to_string_lossy());;
+        let mut env = utils::envgetcurrent();
+        utils::envupdate(&mut env,&TRACKER.wiskfields);
+        let envcstr = utils::hashmap2vcstr(&env);
+        event!(Level::INFO,"execvp: Updated Env {:?}", env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(execvpe)(file, argv, envp.as_ptr())
+        // real!(execvp)(file, argv)
     }
 }
 
@@ -161,7 +178,14 @@ hook! {
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execvpe {
         TRACKER.reportexecvpe(file, argv, envp);
         event!(Level::INFO, "execvpe({})", CStr::from_ptr(file).to_string_lossy());
-        real!(execvpe)(file, argv, envp)
+        let mut env = utils::cpptr2hashmap(envp);
+        utils::envupdate(&mut env,&TRACKER.wiskfields);
+        let envcstr = utils::hashmap2vcstr(&env);
+        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(execvpe)(file, argv, envp.as_ptr())
+        // real!(execvpe)(file, argv, envp)
     }
 }
 
@@ -173,7 +197,14 @@ hook! {
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execve {
         TRACKER.reportexecvpe(pathname, argv, envp);
         event!(Level::INFO, "open({})", CStr::from_ptr(pathname).to_string_lossy());
-        real!(execve)(pathname, argv, envp)
+        let mut env = utils::cpptr2hashmap(envp);
+        utils::envupdate(&mut env,&TRACKER.wiskfields);
+        let envcstr = utils::hashmap2vcstr(&env);
+        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(execve)(pathname, argv, envp.as_ptr())
+        // real!(execve)(pathname, argv, envp)
     }
 }
 
@@ -186,7 +217,13 @@ hook! {
         TRACKER.reportexecvpe(pathname, argv, envp);
         // TRACKER.reportexecveat(dirfd, pathname, argv, envp);
         event!(Level::INFO, "open({})", CStr::from_ptr(pathname).to_string_lossy());
-        real!(execveat)(dirfd, pathname, argv, envp)
+        let mut env = utils::cpptr2hashmap(envp);
+        utils::envupdate(&mut env,&TRACKER.wiskfields);
+        let envcstr = utils::hashmap2vcstr(&env);
+        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(execveat)(dirfd, pathname, argv, envp.as_ptr())
     }
 }
 
@@ -198,8 +235,14 @@ hook! {
     unsafe fn posix_spawn(pid: *mut libc::pid_t, path: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_posix_spawn {
         // TRACKER.reportunlinkat(dirfd, pathname, flags);
-        event!(Level::INFO, "open({})", CStr::from_ptr(path).to_string_lossy());
-        real!(posix_spawn)(pid, path, file_actions, attrp, argv, envp)
+        event!(Level::INFO, "posix_spawn({})", CStr::from_ptr(path).to_string_lossy());
+        let mut env = utils::cpptr2hashmap(envp);
+        utils::envupdate(&mut env,&TRACKER.wiskfields);
+        let envcstr = utils::hashmap2vcstr(&env);
+        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(posix_spawn)(pid, path, file_actions, attrp, argv, envp.as_ptr())
     }
 }
 
@@ -211,7 +254,13 @@ hook! {
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_posix_spawnp {
         // TRACKER.reportposix_spawnp(pid, file, file_actions, attrp, argv, envp);
         event!(Level::INFO, "open({})", CStr::from_ptr(file).to_string_lossy());
-        real!(posix_spawnp)(pid, file, file_actions, attrp, argv, envp)
+        let mut env = utils::cpptr2hashmap(envp);
+        utils::envupdate(&mut env,&TRACKER.wiskfields);
+        let envcstr = utils::hashmap2vcstr(&env);
+        event!(Level::INFO,"execv: Updated Env {:?}", env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(posix_spawnp)(pid, file, file_actions, attrp, argv, envp.as_ptr())
     }
 }
 
