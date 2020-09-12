@@ -57,7 +57,7 @@ hook! {
 }
 
 /* #ifdef HAVE_FOPEN64 */
-#[cfg(target_arch = "x86")]
+#[cfg(target_arch = "x86_64")]
 hook! {
     unsafe fn fopen64(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => my_fopen64 {
         TRACKER.reportfopen(name, mode);
@@ -88,7 +88,7 @@ dhook! {
 #ifdef HAVE_OPEN64
    typedef int (*__libc_open64)(const char *pathname, int flags, ...);
 #endif */
-#[cfg(target_arch = "x86")]
+#[cfg(target_arch = "x86_64")]
 dhook! {
     unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => my_open64 {
         // print(format_args!("open64()\n"));
