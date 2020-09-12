@@ -48,10 +48,22 @@ int main(int argc, char *argv[])
         close(open("/tmp/created.file", O_CREAT|O_WRONLY, 0));
     } else if (strcmp(argv[1], "creat-r") == 0) {
         close(open("/tmp/created.file", O_RDONLY, 0));
+    } else if (strcmp(argv[1], "open64-cw") == 0) {
+        close(open64("/tmp/open64.file", O_CREAT|O_WRONLY, 0));
+    } else if (strcmp(argv[1], "open64-r") == 0) {
+        close(open64("/tmp/open64.file", O_RDONLY, 0));
     } else if (strcmp(argv[1], "openat-cw") == 0) {
         close(openat(AT_FDCWD, "/tmp/opennat.file", O_CREAT|O_WRONLY, 0));
     } else if (strcmp(argv[1], "openat-r") == 0) {
         close(openat(AT_FDCWD, "/tmp/openat.file", O_RDONLY, 0));
+    } else if (strcmp(argv[1], "fopen-cw") == 0) {
+        fclose(fopen("/tmp/fopen.file", "w"));
+    } else if (strcmp(argv[1], "fopen-r") == 0) {
+        fclose(fopen("/tmp/fopen.file", "r"));
+    } else if (strcmp(argv[1], "fopen64-cw") == 0) {
+        fclose(fopen64("/tmp/fopen64.file", "w"));
+    } else if (strcmp(argv[1], "fopen64-r") == 0) {
+        fclose(fopen64("/tmp/fopen64.file", "r"));
     } else if (strcmp(argv[1], "execv") == 0) {
         char *eargv[] = {"ls", "-l", "/usr/bin/ls", NULL};
         execv("/bin/ls", eargv);
