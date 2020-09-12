@@ -84,29 +84,29 @@ dhook! {
     }
 }
 
-/*
-#ifdef HAVE_OPEN64
-   typedef int (*__libc_open64)(const char *pathname, int flags, ...);
-#endif */
-#[cfg(target_arch = "x86_64")]
-dhook! {
-    unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => my_open64 {
-        // print(format_args!("open64()\n"));
-        // event!(Level::INFO, "open({}, {}, {})", *&TRACKER.uuid,
-        //        CStr::from_ptr(pathname).to_string_lossy(), flags);
-        if (flags & O_CREAT) == O_CREAT {
-            let mut ap: std::ffi::VaListImpl = args.clone();
-            let mode: c_int = ap.arg::<c_int>();
-            event!(Level::INFO, "open64({}, {}, {})", CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-            TRACKER.reportopen(pathname,flags,mode);
-            real!(open64)(pathname, flags, mode)
-        } else {
-            event!(Level::INFO, "open64({}, {})", CStr::from_ptr(pathname).to_string_lossy(), flags);
-            TRACKER.reportopen(pathname,flags,0);
-            real!(open64)(pathname, flags)
-        }
-    }
-}
+// /*
+// #ifdef HAVE_OPEN64
+//    typedef int (*__libc_open64)(const char *pathname, int flags, ...);
+// #endif */
+// #[cfg(target_arch = "x86_64")]
+// dhook! {
+//     unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => my_open64 {
+//         // print(format_args!("open64()\n"));
+//         // event!(Level::INFO, "open({}, {}, {})", *&TRACKER.uuid,
+//         //        CStr::from_ptr(pathname).to_string_lossy(), flags);
+//         if (flags & O_CREAT) == O_CREAT {
+//             let mut ap: std::ffi::VaListImpl = args.clone();
+//             let mode: c_int = ap.arg::<c_int>();
+//             event!(Level::INFO, "open64({}, {}, {})", CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
+//             TRACKER.reportopen(pathname,flags,mode);
+//             real!(open64)(pathname, flags, mode)
+//         } else {
+//             event!(Level::INFO, "open64({}, {})", CStr::from_ptr(pathname).to_string_lossy(), flags);
+//             TRACKER.reportopen(pathname,flags,0);
+//             real!(open64)(pathname, flags)
+//         }
+//     }
+// }
 
 
 // /* typedef int (*__libc_openat)(int dirfd, const char *path, int flags, ...); */
