@@ -22,7 +22,7 @@ target/debug/libwisktrack.so:  $(SRCS)
 	cargo build
 
 .PHONY: cargo-tests
-cargo-tests: target/debug/libwisktrack.so
+cargo-tests:
 	echo "cargo test 64bit"
 	cargo test || true
 
@@ -46,10 +46,10 @@ $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 	install -D -m a+rwx scripts/cleanenv.sh $(ROOT)/bin/
 
 .PHONY: tests
-tests: tests/testprog64 tests/testprog32 cargo-tests basics
+tests: tests/testprog64 tests/testprog32 basics | cargo-tests
 
 .PHONY: all
-all: target/i686-unknown-linux-gnu/debug/libwisktrack.so target/debug/libwisktrack.so basics
+all: target/i686-unknown-linux-gnu/debug/libwisktrack.so target/debug/libwisktrack.so basics | cargo-tests
 
 .PHONY: install
 install: $(ROOT)/lib32/libwisktrack.so $(ROOT)/lib/libwisktrack.so $(ROOT)/bin/cleanenv.sh
