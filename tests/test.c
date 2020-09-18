@@ -33,6 +33,7 @@ int testprintf(const char *str, int i, float f, char *s)
 
 int main(int argc, char *argv[])
 {
+    printf("testprog running......\n");
     if (argc != 2) {
         puts("Command: takes one argument. Which system call to run");
         puts("Options: readlink, vprintf, printf, open, fopen, creat");
@@ -48,6 +49,10 @@ int main(int argc, char *argv[])
         close(open("/tmp/created.file", O_CREAT|O_WRONLY, 0));
     } else if (strcmp(argv[1], "creat-r") == 0) {
         close(open("/tmp/created.file", O_RDONLY, 0));
+    } else if (strcmp(argv[1], "open-cw") == 0) {
+        close(open("/tmp/open.file", O_CREAT|O_WRONLY, 0));
+    } else if (strcmp(argv[1], "open-r") == 0) {
+        close(open("/tmp/open.file", O_RDONLY, 0));
     } else if (strcmp(argv[1], "open64-cw") == 0) {
         close(open64("/tmp/open64.file", O_CREAT|O_WRONLY, 0));
     } else if (strcmp(argv[1], "open64-r") == 0) {
