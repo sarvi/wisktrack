@@ -27,6 +27,25 @@ pub fn cpptr2vcstr(vecptr: *const *const libc::c_char) -> Vec<CString> {
     vcstr
 }
 
+pub fn cpptr2str(vecptr: *const *const libc::c_char, sep: &str) -> String {
+    let mut str: String = String::new();
+    for i in 0 .. {
+        unsafe {
+            let argptr: *const c_char = *(vecptr.offset(i));
+            if argptr != ptr::null() {
+                    if i != 0 {
+                        str.push_str(sep);
+                    }
+                    str.push_str(CStr::from_ptr(argptr).to_str().unwrap());
+            } else {
+                break;
+            }
+        }
+    }
+    str
+}
+
+
 pub fn cpptr2hashmap(vecptr: *const *const libc::c_char) -> HashMap<String,String> {
     let mut hash: HashMap<String,String> = HashMap::new();
     for i in 0 .. {
@@ -51,10 +70,36 @@ pub fn hashmap2vcstr(hash: &HashMap<String,String>) -> Vec<CString> {
     x
 }
 
+pub fn hashmapassert(hash: &HashMap<String,String>, mut values: Vec<&str>) -> bool {
+    let mut mv:Vec<(&str,&str)> = vec!();
+    for (k,v) in hash {
+        for (pos, e) in values.iter().enumerate() {
+            if e == k {
+                values.remove(pos);
+                mv.push((k.as_str(), v.as_str()));
+                break;
+            }
+        }
+    }
+    if values.len() == 0 {
+        event!(Level::INFO, "hashassert(match): {:?}",mv);
+    } else {
+        event!(Level::INFO, "hashassert(no-match):");
+    }
+    (values.len() == 0)
+}
+
 pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>) {
     for (k,v) in fields.iter() {
         if k == "LD_PRELOAD" {
-            env.insert(k.to_string(),v.to_string());
+            if let Some(cv) = env.get_mut(k) {
+                if !cv.split(" ").any(|i| i=="libwisktrack.so") {
+                    cv.push_str(" ");
+                    cv.push_str("libwisktrack.so");
+                }
+            } else {
+                env.insert(k.to_string(),v.to_string());
+            }
         } else if k == "LD_LIBRARY_PATH" {
             env.insert(k.to_string(),v.to_string());
         } else {
