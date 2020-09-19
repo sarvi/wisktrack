@@ -393,8 +393,8 @@ hook! {
 #[ctor]
 fn cfoo() {
     // debug(format_args!("Constructor: {}\n", std::process::id()));
-        real!(readlink);
-        redhook::initialize();
+    real!(readlink);
+    redhook::initialize();
     // debug(format_args!("Constructor Complete\n"));
 }
 

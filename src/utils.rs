@@ -101,7 +101,16 @@ pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>
                 env.insert(k.to_string(),v.to_string());
             }
         } else if k == "LD_LIBRARY_PATH" {
-            env.insert(k.to_string(),v.to_string());
+            if let Some(cv) = env.get_mut(k) {
+                for p in v.split(":") {
+                    if !cv.split(":").any(|i| i==p) {
+                        cv.push_str(":");
+                        cv.push_str(p);
+                    }    
+                }
+            } else {
+                env.insert(k.to_string(),v.to_string());
+            }
         } else {
             env.insert(k.to_string(),v.to_string());
         }
