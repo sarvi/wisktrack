@@ -106,7 +106,7 @@ pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>
                     if !cv.split(":").any(|i| i==p) {
                         cv.push_str(":");
                         cv.push_str(p);
-                    }    
+                    }
                 }
             } else {
                 env.insert(k.to_string(),v.to_string());
