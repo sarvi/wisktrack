@@ -1,9 +1,10 @@
 use std::mem;
 use std::{env, ptr};
 use std::ffi::{CStr, OsString};
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd};
 // use std::sync::Mutex;
 use std::io::prelude::*;
+use std::io::{Error, Read, Result, Write};
 use std::path::{Path, PathBuf};
 use std::fs::{File, OpenOptions, metadata, create_dir_all};
 use std::string::String;
@@ -20,7 +21,20 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing::{Level, event, };
 use redhook::ld_preload::make_dispatch;
 use redhook::debug;
+use backtrace::Backtrace;
 
+pub const DEBUGMODE:bool = true;
+
+#[macro_export]
+macro_rules! setdebugmode {
+    ($operation:expr) => {
+            if DEBUGMODE {
+                if !std::env::var("RUST_BACKTRACE").is_ok() { std::env::set_var("RUST_BACKTRACE", "1"); }
+                assert_eq!(std::env::var("RUST_BACKTRACE").is_ok(), true, "Command:  {} : {} : {}\n{:?}",
+                           $operation, TRACKER.uuid, TRACKER.cmdline.join(" "),Backtrace::new());
+            }
+    };
+}
 
 
 const SENDLIMIT: usize = 4094;
@@ -39,14 +53,18 @@ pub struct Tracker {
     pub pid: String,
     pub env : HashMap<String, String>,
     pub wiskfields : Vec<(String, String)>,
+    pub cmdline: Vec<String>,
 }
 
 fn fd2path (fd : c_int ) -> PathBuf {
-    let f = unsafe { File::from_raw_fd(fd) };
-    let fp = f.path().unwrap();
-    // println!("{}",fp.as_path().to_str().unwrap());
-    mem::forget(f); 
-    fp
+    // let f = unsafe { File::from_raw_fd(fd) };
+    // let fp = f.path().unwrap();
+    // // println!("{}",fp.as_path().to_str().unwrap());
+    // f.into_raw_fd();
+    // fp
+    let mut rv = PathBuf::new();
+    rv.push("some looooooooooooooooooooooooong dummy path");
+    rv
 }
 
 fn path2str (path: PathBuf) -> String {
@@ -85,7 +103,15 @@ unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
     }
 }
 
-
+// this is a macro just so it can handle any integer type easily.
+macro_rules! check_err {
+    ( $e:expr ) => {
+        match $e {
+            -1 => Err(Error::last_os_error()),
+            other => Ok(other)
+        }
+    }
+}
 
 impl Tracker {
     pub fn init() -> Tracker {
@@ -157,7 +183,18 @@ impl Tracker {
             cwd : cwdostr.into_string().unwrap(),
             env : map,
             wiskfields : wiskmap,
+            cmdline : std::env::args().map(|x| x).collect(),
         };
+        // let fd = tracker.file.as_raw_fd();
+        // unsafe {
+        //     let flags = check_err!(libc::fcntl(fd, libc::F_GETFD)).unwrap();
+        //     // debug(format_args!("Trackfile Flags: {:X}\n", flags));
+        //     check_err!(libc::fcntl(fd, libc::F_SETFD, flags & (!libc::FD_CLOEXEC))).unwrap();    
+        //     let flags = check_err!(libc::fcntl(fd, libc::F_GETFD)).unwrap();
+        //     // debug(format_args!("Trackfile Flags: {:X}\n", flags));
+        // }
+        setdebugmode!("program_start");
+
         (&tracker.file).write_all(format!("{} CALLS {}\n", tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap()).as_bytes()).unwrap();
         (&tracker.file).write_all(format!("{} CWD {}\n", tracker.uuid, serde_json::to_string(&tracker.cwd).unwrap()).as_bytes()).unwrap();
         (&tracker.file).write_all(format!("{} WSROOT {}\n", tracker.uuid, serde_json::to_string(&tracker.wsroot).unwrap()).as_bytes()).unwrap();

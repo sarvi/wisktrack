@@ -16,6 +16,9 @@ else
 fi
 RUST_BACKTRACE=1
 WISK_TRACE=`pwd`/wisktrace.log
+# rm -f `pwd`/wisktrack.pipe
+# mknod `pwd`/wisktrack.pipe p
+# WISK_TRACKFILE=`pwd`/wisktrack.pipe
 WISK_TRACKFILE=`pwd`/wisktrack.file
 LD_PRELOAD=libwisktrack.so
 LD_LIBRARY_PATH=$SCRIPT_DIR/../lib32:$SCRIPT_DIR/../lib64

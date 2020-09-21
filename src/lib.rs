@@ -17,7 +17,7 @@ mod tracker;
 mod utils;
 
 use std::{env, ptr};
-use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER};
+use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER, DEBUGMODE};
 use std::ffi::CStr;
 use core::cell::Cell;
 use ctor::{ctor, dtor};
@@ -26,13 +26,14 @@ use tracing::{Level, event, };
 use libc::{c_char,c_int,O_CREAT,SYS_readlink};
 use tracing::dispatcher::with_default;
 use redhook::debug;
-
+use backtrace::Backtrace;
 
 
 hook! {
     unsafe fn readlink(path: *const libc::c_char, buf: *mut libc::c_char, bufsiz: libc::size_t) -> libc::ssize_t => (my_readlink,SYS_readlink, true) {
-        TRACKER.reportreadlink(path);
+        setdebugmode!("readlink");
         event!(Level::INFO, "readlink({})", CStr::from_ptr(path).to_string_lossy());
+        TRACKER.reportreadlink(path);
         real!(readlink)(path, buf, bufsiz)
     }
 }
@@ -40,16 +41,18 @@ hook! {
 /* int creat(const char *pathname, mode_t mode); */
 hook! {
     unsafe fn creat(pathname: *const libc::c_char, mode: libc::mode_t) -> c_int => my_creat {
-        TRACKER.reportcreat(pathname, mode);
+        setdebugmode!("creat");
         event!(Level::INFO, "creat({})", CStr::from_ptr(pathname).to_string_lossy());
+        TRACKER.reportcreat(pathname, mode);
         real!(creat)(pathname, mode)
     }
 }
 
 hook! {
     unsafe fn fopen(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => my_fopen {
-        TRACKER.reportfopen(name, mode);
+        setdebugmode!("fopen");
         event!(Level::INFO, "fopen({})", CStr::from_ptr(name).to_string_lossy());
+        TRACKER.reportfopen(name, mode);
         real!(fopen)(name, mode)
     }
 }
@@ -58,8 +61,9 @@ hook! {
 #[cfg(target_arch = "x86_64")]
 hook! {
     unsafe fn fopen64(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => my_fopen64 {
-        TRACKER.reportfopen(name, mode);
+        setdebugmode!("fopen64");
         event!(Level::INFO, "fopen64({})", CStr::from_ptr(name).to_string_lossy());
+        TRACKER.reportfopen(name, mode);
         real!(fopen64)(name, mode)
     }
 }
@@ -68,6 +72,7 @@ hook! {
 /* typedef int (*__libc_open)(const char *pathname, int flags, ...); */
 dhook! {
     unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => my_open {
+        setdebugmode!("open");
         if (flags & O_CREAT) == O_CREAT {
             let mut ap: std::ffi::VaListImpl = args.clone();
             let mode: c_int = ap.arg::<c_int>();
@@ -100,6 +105,7 @@ dhook! {
                 real!(open64)(pathname, flags)
             }
         } else {
+            setdebugmode!("open64");
             if (flags & O_CREAT) == O_CREAT {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
@@ -126,6 +132,7 @@ dhook! {
             TRACKER.reportopen(pathname,flags,mode);
             real!(openat)(dirfd, pathname, flags, mode)
         } else {
+            setdebugmode!("openat");
             event!(Level::INFO, "openat({}, {}, {})", dirfd, CStr::from_ptr(pathname).to_string_lossy(), flags);
             TRACKER.reportopen(pathname,flags,0);
             real!(openat)(dirfd, pathname, flags)
@@ -145,8 +152,9 @@ typedef int (*__libc_fcntl)(int fd, int cmd, ...);
 
  hook! {
     unsafe fn execv(path: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => my_execv {
-        TRACKER.reportexecv(path, argv);{}
+        setdebugmode!("execv");
         event!(Level::INFO, "execv({}, \"{}\"F)", CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
+        TRACKER.reportexecv(path, argv);{}
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         utils::hashmapassert(&env, vec!("LD_PRELOAD", "LD_LIBRARY_PATH"));
@@ -163,8 +171,9 @@ typedef int (*__libc_fcntl)(int fd, int cmd, ...);
 
 hook! {
     unsafe fn execvp(file: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => my_execvp {
-        TRACKER.reportexecv(file, argv);
+        setdebugmode!("execvp");
         event!(Level::INFO, "execvp({}, \"{}\")", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));;
+        TRACKER.reportexecv(file, argv);
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         utils::hashmapassert(&env, vec!("LD_PRELOAD", "LD_LIBRARY_PATH"));
@@ -182,8 +191,9 @@ hook! {
 hook! {
     unsafe fn execvpe(file: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execvpe {
-        TRACKER.reportexecvpe(file, argv, envp);
+        setdebugmode!("execvpe");
         event!(Level::INFO, "execvpe({}, \"{}\")", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
+        TRACKER.reportexecvpe(file, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         utils::hashmapassert(&env, vec!("LD_PRELOAD", "LD_LIBRARY_PATH"));
@@ -202,8 +212,9 @@ hook! {
 hook! {
     unsafe fn execve(pathname: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execve {
-        TRACKER.reportexecvpe(pathname, argv, envp);
+        setdebugmode!("execve");
         event!(Level::INFO, "execve({}, \"{}\")", CStr::from_ptr(pathname).to_string_lossy(),utils::cpptr2str(argv, " "));
+        TRACKER.reportexecvpe(pathname, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         utils::hashmapassert(&env, vec!("LD_PRELOAD", "LD_LIBRARY_PATH"));
@@ -222,9 +233,10 @@ hook! {
 hook! {
     unsafe fn execveat(dirfd: libc::c_int, pathname: *const libc::c_char,
                        argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_execveat {
-        TRACKER.reportexecvpe(pathname, argv, envp);
-        // TRACKER.reportexecveat(dirfd, pathname, argv, envp);
+        setdebugmode!("execveat");
         event!(Level::INFO, "execveat({}, \"{}\")", CStr::from_ptr(pathname).to_string_lossy(),utils::cpptr2str(argv, " "));
+        // TRACKER.reportexecvpe(pathname, argv, envp);
+        // TRACKER.reportexecveat(dirfd, pathname, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         utils::hashmapassert(&env, vec!("LD_PRELOAD", "LD_LIBRARY_PATH"));
@@ -243,8 +255,9 @@ hook! {
 hook! {
     unsafe fn posix_spawn(pid: *mut libc::pid_t, path: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_posix_spawn {
-        // TRACKER.reportunlinkat(dirfd, pathname, flags);
+        setdebugmode!("posix_spawn");
         event!(Level::INFO, "posix_spawn({}, \"{}\")", CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
+        // TRACKER.reportunlinkat(dirfd, pathname, flags);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         utils::hashmapassert(&env, vec!("LD_PRELOAD", "LD_LIBRARY_PATH"));
@@ -262,8 +275,9 @@ hook! {
 hook! {
     unsafe fn posix_spawnp(pid: *mut libc::pid_t, file: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => my_posix_spawnp {
-        // TRACKER.reportposix_spawnp(pid, file, file_actions, attrp, argv, envp);
+        setdebugmode!("posix_spawnp");
         event!(Level::INFO, "posix_spawnp({}, \"{}\")", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
+        // TRACKER.reportposix_spawnp(pid, file, file_actions, attrp, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&TRACKER.wiskfields);
         utils::hashmapassert(&env, vec!("LD_PRELOAD", "LD_LIBRARY_PATH"));
@@ -280,8 +294,9 @@ hook! {
 
 hook! {
     unsafe fn popen(command: *const libc::c_char, ctype: *const libc::c_char) -> *const libc::FILE => my_popen {
-        TRACKER.reportpopen(command, ctype);
+        setdebugmode!("popen");
         event!(Level::INFO, "popen({})", CStr::from_ptr(command).to_string_lossy());
+        TRACKER.reportpopen(command, ctype);
         real!(popen)(command, ctype)
     }
 }
@@ -289,6 +304,7 @@ hook! {
 /* int symlink(const char *target, const char *linkpath); */
 hook! {
     unsafe fn symlink(target: *const libc::c_char, linkpath: *const libc::c_char) -> libc::c_int => my_symlink {
+        setdebugmode!("symlink");
         TRACKER.reportsymlink(target, linkpath);
         event!(Level::INFO, "symlink({}, {})", CStr::from_ptr(target).to_string_lossy(), CStr::from_ptr(linkpath).to_string_lossy());
         real!(symlink)(target, linkpath)
@@ -298,8 +314,9 @@ hook! {
 /* int symlinkat(const char *target, int newdirfd, const char *linkpath); */
 hook! {
     unsafe fn symlinkat(target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) -> libc::c_int => my_symlinkat {
-        TRACKER.reportsymlinkat(target, newdirfd, linkpath);
+        setdebugmode!("symlinkat");
         event!(Level::INFO, "symlinkat({}, {})", CStr::from_ptr(target).to_string_lossy(),CStr::from_ptr(linkpath).to_string_lossy() );
+        TRACKER.reportsymlinkat(target, newdirfd, linkpath);
         real!(symlinkat)(target, newdirfd, linkpath)
     }
 }
@@ -307,8 +324,9 @@ hook! {
 /* int link(const char *oldpath, const char *newpath); */
 hook! {
     unsafe fn link(oldpath: *const libc::c_char, newpath: *const libc::c_char) -> libc::c_int => my_link {
-        TRACKER.reportlink(oldpath, newpath);
+        setdebugmode!("link");
         event!(Level::INFO, "link({}, {})", CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
+        TRACKER.reportlink(oldpath, newpath);
         real!(link)(oldpath, newpath)
     }
 }
@@ -317,8 +335,9 @@ hook! {
 hook! {
     unsafe fn linkat(olddirfd: libc::c_int, oldpath: *const libc::c_char,
                      newdirfd: libc::c_int, newpath: *const libc::c_char, flags: libc::c_int) -> libc::c_int => my_linkat {
-        TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
+        setdebugmode!("linkat");
         event!(Level::INFO, "linkat({}, {})", CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
+        TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
         real!(linkat)(olddirfd, oldpath, newdirfd, newpath, flags)
     }
 }
@@ -326,8 +345,9 @@ hook! {
 /* int unlink(const char *pathname); */
 hook! {
     unsafe fn unlink(pathname: *const libc::c_char) -> libc::c_int => my_unlink {
-        TRACKER.reportunlink(pathname);
+        setdebugmode!("unlink");
         event!(Level::INFO, "unlink({})", CStr::from_ptr(pathname).to_string_lossy());
+        TRACKER.reportunlink(pathname);
         real!(unlink)(pathname)
     }
 }
@@ -335,8 +355,9 @@ hook! {
 /* int unlinkat(int dirfd, const char *pathname, int flags); */
 hook! {
     unsafe fn unlinkat(dirfd: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int) -> libc::c_int => my_unlinkat {
-        TRACKER.reportunlinkat(dirfd, pathname, flags);
+        setdebugmode!("unlinkat");
         event!(Level::INFO, "unlinkat({})", CStr::from_ptr(pathname).to_string_lossy());
+        TRACKER.reportunlinkat(dirfd, pathname, flags);
         real!(unlinkat)(dirfd, pathname, flags)
     }
 }
@@ -344,8 +365,9 @@ hook! {
 /* int chmod(__const char *__file, __mode_t __mode); */
 hook! {
     unsafe fn chmod(pathname: *const libc::c_char, mode: libc::mode_t) -> libc::c_int => my_chmod {
-        TRACKER.reportchmod(pathname, mode);
+        setdebugmode!("chmod");
         event!(Level::INFO, "chmod({})", CStr::from_ptr(pathname).to_string_lossy());
+        TRACKER.reportchmod(pathname, mode);
         // debug(format_args!("chmod({})", CStr::from_ptr(pathname).to_string_lossy()));
         real!(chmod)(pathname, mode)
     }
@@ -354,8 +376,9 @@ hook! {
 /* int fchmod(int __fd, __mode_t __mode); */
 hook! {
     unsafe fn fchmod(fd: libc::c_int, mode: libc::mode_t) -> libc::c_int => my_fchmod {
-        TRACKER.reportfchmod(fd, mode);
+        setdebugmode!("fchmod");
         event!(Level::INFO, "fchmod()");
+        TRACKER.reportfchmod(fd, mode);
         real!(fchmod)(fd, mode)
     }
 }
@@ -363,8 +386,9 @@ hook! {
 /* int fchmodat(int __fd, __const char *__file, __mode_t __mode, int flags); */
 hook! {
     unsafe fn fchmodat(dirfd: libc::c_int, pathname: *const libc::c_char, mode: libc::mode_t, flags: libc::c_int) -> libc::c_int => my_fchmodat {
-        TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
+        setdebugmode!("fchmodat");
         event!(Level::INFO, "fchmodat({})", CStr::from_ptr(pathname).to_string_lossy());
+        TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
         real!(fchmodat)(dirfd, pathname, mode, flags)
     }
 }
@@ -393,14 +417,16 @@ hook! {
 #[ctor]
 fn cfoo() {
     // debug(format_args!("Constructor: {}\n", std::process::id()));
-    real!(readlink);
+    // real!(readlink);
     redhook::initialize();
+    MY_DISPATCH.with(|(tracing, my_dispatch, _guard)| { });
     // debug(format_args!("Constructor Complete\n"));
 }
 
 #[dtor]
 fn dfoo() {
 //   debug(format_args!("Hello, world! Destructor"));
+
 }
 
 
