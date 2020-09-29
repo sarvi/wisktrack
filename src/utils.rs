@@ -1,9 +1,22 @@
 
+use std::sync::Mutex;
 use std::ffi::{CStr, CString};
 use std::{env, ptr};
-use libc::{c_char};
+use core::sync::atomic::{AtomicUsize, Ordering};
+use nix::fcntl::OFlag;
+use std::io::{Error, Read, Result, Write};
+use libc::{c_char,c_int, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
+use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd, RawFd};
 use std::collections::HashMap;
+use std::fs::File;
+use nix::unistd::dup3;
 use tracing::{Level, event};
+use redhook::debug;
+
+// static COUNTER: Mutex<Cell<i32>> = Mutex::new(Cell::new(0));
+// static mut wiskfd: Mutex<i32> = Mutex::new(800);
+pub static WISKFD: AtomicUsize = AtomicUsize::new(800);
+
 
 pub fn vcstr2vecptr(vcstr: &Vec<CString>) -> Vec<*const c_char> {
     let vecptr: Vec<_> = vcstr.iter() // do NOT into_iter()
@@ -81,11 +94,12 @@ pub fn hashmapassert(hash: &HashMap<String,String>, mut values: Vec<&str>) -> bo
             }
         }
     }
-    if values.len() == 0 {
-        event!(Level::INFO, "hashassert(match): {:?}",mv);
-    } else {
-        event!(Level::INFO, "hashassert(no-match):");
-    }
+    assert_eq!(values.len(),0, "Missing environment variables: {:?}", values);
+    // if values.len() == 0 {
+    //     event!(Level::INFO, "hashassert(match): {:?}",mv);
+    // } else {
+    //     event!(Level::INFO, "hashassert(no-match):");
+    // }
     (values.len() == 0)
 }
 
@@ -93,24 +107,25 @@ pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>
     for (k,v) in fields.iter() {
         if k == "LD_PRELOAD" {
             if let Some(cv) = env.get_mut(k) {
-                if !cv.split(" ").any(|i| i=="libwisktrack.so") {
+                if !cv.split(" ").any(|i| (*i).ends_with("libwisktrack.so")) {
+                    // assert_eq!(true, false, "");
                     cv.push_str(" ");
-                    cv.push_str("libwisktrack.so");
+                    cv.push_str(v);
                 }
             } else {
                 env.insert(k.to_string(),v.to_string());
             }
-        } else if k == "LD_LIBRARY_PATH" {
-            if let Some(cv) = env.get_mut(k) {
-                for p in v.split(":") {
-                    if !cv.split(":").any(|i| i==p) {
-                        cv.push_str(":");
-                        cv.push_str(p);
-                    }
-                }
-            } else {
-                env.insert(k.to_string(),v.to_string());
-            }
+        // } else if k == "LD_LIBRARY_PATH" {
+        //     if let Some(cv) = env.get_mut(k) {
+        //         for p in v.split(":") {
+        //             if !cv.split(":").any(|i| i==p) {
+        //                 cv.push_str(":");
+        //                 cv.push_str(p);
+        //             }
+        //         }
+        //     } else {
+        //         env.insert(k.to_string(),v.to_string());
+        //     }
         } else {
             env.insert(k.to_string(),v.to_string());
         }
@@ -124,10 +139,37 @@ pub fn envgetcurrent() -> HashMap<String,String> {
     hash
 }
 
+pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
+    let mut wiskmap: Vec<(String,String)> = vec!();
+    use std::env::VarError::NotPresent;
+    for k in fields.iter() {
+        if let Some(eval) = env::var_os(k) {
+            wiskmap.push(((*k).to_owned(), eval.into_string().unwrap()));
+            env::remove_var(k);
+        }
+    }
+    wiskmap
+}
+
+pub fn internal_open(filename: &str, mode: i32) -> File {
+    let fd = WISKFD.fetch_add(1, Ordering::Relaxed) as i32;
+    let filename = CString::new(filename).unwrap();
+    let tempfd = unsafe {
+        libc::syscall(SYS_open, filename.as_ptr(), mode,
+                      S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)
+    };
+    let fd = dup3(tempfd as i32, fd, OFlag::from_bits(O_CLOEXEC|O_LARGEFILE|O_APPEND|O_CREAT).unwrap()).unwrap();
+    let f:File = unsafe { FromRawFd::from_raw_fd(fd as i32) };
+    debug(format_args!("File Descriptor: {}, {:?}", tempfd, &f));
+    (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
+    f
+}
+
 
 #[cfg(test)]
 mod env_tests {
     use std::io;
+    use std::env::VarError::NotPresent;
     use std::ffi::{CString};
     use libc::{opendir, dirfd};
     use super::*;
@@ -182,4 +224,27 @@ mod env_tests {
     //     assert!(true);
     //     Ok(())
     // }
+
+    #[test]
+    fn test_envextractwisk_1() -> io::Result<()> {
+        let fields = vec!["WISK_TRACE", "WISK_TRACK", "LD_PRELOAD"];
+        let env = vec![("WISK_TRACE", "tracefile"), ("WISK_TRACK", "track.file"), ("LD_PRELOAD", "lib_wisktrack.so"),
+                       ("LD_LIBRARY_PATH", "abc1/abc1:abc1/abc1:abc1/abc1:")];
+        for (k,v) in env.iter() {
+            env::set_var(k,v);
+        }
+        let wiskmap = envextractwisk(fields);
+        
+        assert_eq!(env::var("WISK_TRACE"), Err(NotPresent));
+        assert_eq!(env::var("WISK_TRACK"), Err(NotPresent));
+        assert_eq!(env::var("LD_PRELOAD"), Err(NotPresent));
+        Ok(())
+    }
+
+    #[test]
+    fn test_internalopen_1() -> io::Result<()> {
+        let f = internal_open("/tmp/test1", O_CREAT);
+        (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
+        Ok(())
+    }
 }

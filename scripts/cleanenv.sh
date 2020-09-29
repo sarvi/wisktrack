@@ -5,30 +5,51 @@ SCRIPT="$SCRIPT_DIR/$SCRIPT_NAME"
 WORKSPACE_DIR="$( dirname "$SCRIPT_DIR" )"
 INSTANCE="$( basename "$WORKSPACE_DIR" )"
 SCRIPT_SHORT_NAME="${SCRIPT_NAME%.*}"
+LIBRARY_PATH_BASE=$(realpath $SCRIPT_DIR/../)
 
-echo "SCRIPT_DIR: $SCRIPT_DIR"
+# echo "SCRIPT_DIR: $SCRIPT_DIR"
+# echo "LIBRARY_PATH_BASE: $LIBRARY_PATH_BASE"
 
-if [[ "$SCRIPT_DIR" == */bin ]]
-then
-    echo "Installed:"
-else
-    echo "Workspace:"
-fi
+LD_DEBUG=
+while true
+do
+    if [[ $1 == -ld_debug* ]];  then
+        echo "Option: $1"
+        if [[ $1 = -ld_debug=* ]];  then
+            LD_DEBUG=${1##*-ld_debug=}
+        else
+            LD_DEBUG=libs
+        fi
+        echo "LD_DEBUG: $LD_DEBUG"
+        shift
+    elif [[ $1 == -trace* ]];  then
+        echo "Option: $1"
+        WISK_TRACE=`pwd`/wisktrace.log
+        echo "WISK_TRACE: $WISK_TRACE"
+        shift
+    elif [[ $1 == -wsroot=* ]];  then
+        echo "Option: $1"
+        WISK_WSROOT=${1##*-wsroot=}
+        echo "WISK_WSROOT: $WISK_WSROOT"
+        shift
+    else
+        break
+    fi
+done
+
+echo "Args: $*"
+
 RUST_BACKTRACE=1
-WISK_TRACE=`pwd`/wisktrace.log
 # rm -f `pwd`/wisktrack.pipe
 # mknod `pwd`/wisktrack.pipe p
-# WISK_TRACKFILE=`pwd`/wisktrack.pipe
-WISK_TRACKFILE=`pwd`/wisktrack.file
-LD_PRELOAD=libwisktrack.so
-LD_LIBRARY_PATH=$SCRIPT_DIR/../lib32:$SCRIPT_DIR/../lib64
-echo "PATH: $PATH"
+# WISK_TRACK=`pwd`/wisktrack.pipe
+WISK_TRACK=`pwd`/wisktrack.file
+LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
 echo "LD_PRELOAD: $LD_PRELOAD"
-echo "LD_LIBRARY_PATH: $LD_LIBRARY_PATH"
-echo "WISK_TRACE: $WISK_TRACE"
-echo "WISK_TRACKFILE: $WISK_TRACKFILE"
+echo "WISK_TRACK: $WISK_TRACK"
 
 rm -f $WISK_TRACE
-rm -f $WISK_TRACKFILE
-env -i RUST_BACKTRACE="$RUST_BACKTRACE" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" LD_LIBRARY_PATH="$LD_LIBRARY_PATH" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACKFILE="$WISK_TRACKFILE" "$@"
+rm -rf $WISK_TRACK
+echo "Starting....."
+env -i LD_DEBUG="$LD_DEBUG" RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" "$@"
 

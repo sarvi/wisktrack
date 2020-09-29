@@ -6,6 +6,7 @@ SRCS:=src/lib.rs src/tracker.rs src/utils.rs
 .PHONY: basics
 basics:
 	echo "Basics..."
+	ln -sf target/i686-unknown-linux-gnu/debug lib
 	ln -sf target/i686-unknown-linux-gnu/debug lib32
 	ln -sf target/debug lib64
 
@@ -39,6 +40,7 @@ $(ROOT)/lib32/libwisktrack.so: target/i686-unknown-linux-gnu/debug/libwisktrack.
 	echo "install 32bit"
 	mkdir -p $(ROOT)/lib32/
 	install -D -m a+rwx target/i686-unknown-linux-gnu/debug/libwisktrack.so $(ROOT)/lib32/
+	ln -sf lib32 $(ROOT)/lib
 
 $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 	echo "install scripts"
