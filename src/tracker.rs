@@ -32,7 +32,10 @@ pub const DEBUGMODE:bool = true;
 macro_rules! setdebugmode {
     ($operation:expr) => {
             if DEBUGMODE {
-                if !std::env::var("RUST_BACKTRACE").is_ok() { std::env::set_var("RUST_BACKTRACE", "1"); }
+                if !std::env::var("RUST_BACKTRACE").is_ok() {
+                    std::env::set_var("RUST_BACKTRACE", "1");
+                    std::env::set_var("RUST_DEBUG", $operation);
+                }
                 // assert_eq!(std::env::var("RUST_BACKTRACE").is_ok(), true, "Command:  {} : {} : {}\n{:?}",
                 //            $operation, TRACKER.uuid, TRACKER.cmdline.join(" "),Backtrace::new());
             }
@@ -49,6 +52,7 @@ const WISK_FIELDS: &'static [&'static str] = &["WISK_TRACE", "WISK_TRACK", "WISK
 
 pub struct Tracker {
     pub file: File,
+    pub fd: i32,
 }
 
 
@@ -127,6 +131,10 @@ lazy_static! {
     };
     pub static ref CMDLINE: Vec<String> = std::env::args().map(|x| x).collect();
     pub static ref TRACKER : Tracker = Tracker::new();
+    // pub static ref WISKFDS : Vec<i32> = {
+    //     let x= vec!();
+    //     x.push(TRACKER.)
+    // }
 }
 
 pub fn initialize_statics() {
@@ -207,7 +215,10 @@ impl Tracker {
         let f = OpenOptions::new().create(true).append(true).open(&*WISKTRACK).unwrap();
         let tempfd = f.into_raw_fd();
         let fd = dup2(tempfd, TRACKERFD).unwrap();
-        let tracker = Tracker { file :  unsafe { FromRawFd::from_raw_fd(fd) } };
+        let tracker = Tracker {
+            file :  unsafe { FromRawFd::from_raw_fd(fd) },
+            fd : fd,
+        };
         // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
         // debug(format_args!("Tracker File: {:?}\n", tracker.file));
         // debug(format_args!("Tracker Initializer: Done\n"));
@@ -223,6 +234,7 @@ impl Tracker {
         (&self.file).write_all(format!("{} CALLS {}\n", &PUUID.as_str(), serde_json::to_string(&UUID.as_str()).unwrap()).as_bytes()).unwrap();
         (&self.file).write_all(format!("{} CMDLINE {}\n", &UUID.as_str(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()).as_bytes()).unwrap();
         (&self.file).write_all(format!("{} WISKENV {}\n", &UUID.as_str(), serde_json::to_string(&ENV.to_owned()).unwrap()).as_bytes()).unwrap();
+        (&self.file).write_all(format!("{} PID {}\n", UUID.as_str(), serde_json::to_string(&PID.to_owned()).unwrap()).as_bytes()).unwrap();
         (&self.file).write_all(format!("{} CWD {}\n", UUID.as_str(), serde_json::to_string(&CWD.to_owned()).unwrap()).as_bytes()).unwrap();
         (&self.file).write_all(format!("{} WSROOT {}\n", UUID.as_str(), serde_json::to_string(&WSROOT.to_owned()).unwrap()).as_bytes()).unwrap();
         // event!(Level::INFO, "Tracker Initialization Complete: {} CALLS {}, WISKENV: {}, CMD: {}",
@@ -420,6 +432,11 @@ impl Tracker {
 
     pub unsafe fn reportpopen(self: &Self, command: *const libc::c_char, ctype: *const libc::c_char) {
         let args = ("/bin/sh", cstr2str(command), cstr2str(ctype));
+        self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportsystem(self: &Self, command: *const libc::c_char) {
+        let args = ("/bin/sh", cstr2str(command));
         self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 

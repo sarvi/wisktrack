@@ -52,82 +52,101 @@ hook! {
     }
 }
 
-// hook! {
-//     unsafe fn fopen(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen,-1,true) {
-//         setdebugmode!("fopen");
-//         event!(Level::INFO, "fopen({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
-//         TRACKER.reportfopen(name, mode);
-//         real!(fopen)(name, mode)
-//     }
-// }
+hook! {
+    unsafe fn fopen(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen,-1,true) {
+        setdebugmode!("fopen");
+        event!(Level::INFO, "fopen({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
+        TRACKER.reportfopen(name, mode);
+        real!(fopen)(name, mode)
+    }
+}
 
-// /* #ifdef HAVE_FOPEN64 */
-// #[cfg(target_arch = "x86_64")]
-// hook! {
-//     unsafe fn fopen64(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen64,-1,true) {
-//         setdebugmode!("fopen64");
-//         event!(Level::INFO, "fopen64({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
-//         TRACKER.reportfopen(name, mode);
-//         real!(fopen64)(name, mode)
-//     }
-// }
+/* #ifdef HAVE_FOPEN64 */
+#[cfg(target_arch = "x86_64")]
+hook! {
+    unsafe fn fopen64(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen64,-1,true) {
+        setdebugmode!("fopen64");
+        event!(Level::INFO, "fopen64({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
+        TRACKER.reportfopen(name, mode);
+        real!(fopen64)(name, mode)
+    }
+}
 /* #endif */
 
-// /* typedef int (*__libc_open)(const char *pathname, int flags, ...); */
-// dhook! {
-//     unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open,true) {
-//         setdebugmode!("open");
-//         if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
-//             let mut ap: std::ffi::VaListImpl = args.clone();
-//             let mode: c_int = ap.arg::<c_int>();
-//             event!(Level::INFO, "open({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-//             TRACKER.reportopen(pathname,flags,mode);
-//             real!(open)(pathname, flags, mode)
-//         } else {
-//             event!(Level::INFO, "open({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
-//             TRACKER.reportopen(pathname,flags,0);
-//             real!(open)(pathname, flags)
-//         }
-//     }
-// }
+/* typedef int (*__libc_open)(const char *pathname, int flags, ...); */
+dhook! {
+    unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open,true) {
+        setdebugmode!("open");
+        if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
+            let mut ap: std::ffi::VaListImpl = args.clone();
+            let mode: c_int = ap.arg::<c_int>();
+            event!(Level::INFO, "open({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
+            TRACKER.reportopen(pathname,flags,mode);
+            real!(open)(pathname, flags, mode)
+        } else {
+            event!(Level::INFO, "open({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
+            TRACKER.reportopen(pathname,flags,0);
+            real!(open)(pathname, flags)
+        }
+    }
+}
 
-// // /*
-// // #ifdef HAVE_OPEN64
-// //    typedef int (*__libc_open64)(const char *pathname, int flags, ...);
-// // #endif */
-// #[cfg(target_arch = "x86_64")]
-// dhook! {
-//     unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open64, true) {
-//         if !initialized() {
-//             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
-//                 let mut ap: std::ffi::VaListImpl = args.clone();
-//                 let mode: c_int = ap.arg::<c_int>();
-//                 // debug(format_args!("open64({}, {:X}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags, mode));
-//                 event!(Level::INFO, "open64({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-//                 real!(open64)(pathname, flags, mode)
-//             } else {
-//                 // debug(format_args!("open64({}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags));
-//                 event!(Level::INFO, "open64({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
-//                 real!(open64)(pathname, flags)
-//             }
-//         } else {
-//             setdebugmode!("open64");
-//             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
-//                 let mut ap: std::ffi::VaListImpl = args.clone();
-//                 let mode: c_int = ap.arg::<c_int>();
-//                 // debug(format_args!("open64({}, {:X}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags, mode));
-//                 event!(Level::INFO, "open64({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-//                 TRACKER.reportopen(pathname,flags,mode);
-//                 real!(open64)(pathname, flags, mode)
-//             } else {
-//                 // event!(Level::INFO, "open64({}, {}, {})", TRACKER.uuid, CStr::from_ptr(pathname).to_string_lossy(), flags);
-//                 TRACKER.reportopen(pathname,flags,0);
-//                 debug(format_args!("open64({}, {}, {:X})\n", &UUID.as_str(),CStr::from_ptr(pathname).to_string_lossy(), flags));
-//                 real!(open64)(pathname, flags)
-//             }
-//         }
-//     }
-// }
+// /*
+// #ifdef HAVE_OPEN64
+//    typedef int (*__libc_open64)(const char *pathname, int flags, ...);
+// #endif */
+#[cfg(target_arch = "x86_64")]
+dhook! {
+    unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open64, true) {
+        if !initialized() {
+            if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
+                let mut ap: std::ffi::VaListImpl = args.clone();
+                let mode: c_int = ap.arg::<c_int>();
+                // debug(format_args!("open64({}, {:X}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags, mode));
+                event!(Level::INFO, "open64({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
+                real!(open64)(pathname, flags, mode)
+            } else {
+                // debug(format_args!("open64({}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags));
+                event!(Level::INFO, "open64({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
+                real!(open64)(pathname, flags)
+            }
+        } else {
+            setdebugmode!("open64");
+            if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
+                let mut ap: std::ffi::VaListImpl = args.clone();
+                let mode: c_int = ap.arg::<c_int>();
+                // debug(format_args!("open64({}, {:X}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags, mode));
+                event!(Level::INFO, "open64({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
+                TRACKER.reportopen(pathname,flags,mode);
+                real!(open64)(pathname, flags, mode)
+            } else {
+                // debug(format_args!("open64({}, {}, {:X})\n", &UUID.as_str(),CStr::from_ptr(pathname).to_string_lossy(), flags));
+                event!(Level::INFO, "open64({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
+                TRACKER.reportopen(pathname,flags,0);
+                real!(open64)(pathname, flags)
+            }
+        }
+    }
+}
+
+// /*
+// #ifdef HAVE_OPEN64
+//    typedef int close(int fd);;
+// #endif */
+hook! {
+    unsafe fn close(fd : c_int ) -> c_int => my_close {
+        setdebugmode!("close");
+        if fd != TRACKER.fd {
+            // debug(format_args!("close({})\n", fd));
+            event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
+            // TRACKER.reportclose(fd);
+            real!(close)(fd)
+        } else {
+            // debug(format_args!("close({}) -----> Skipping\n", fd));
+            0
+        }
+    }
+}
 
 
 // /* typedef int (*__libc_openat)(int dirfd, const char *path, int flags, ...); */
@@ -150,11 +169,25 @@ hook! {
 
 /* 
 typedef int (*__libc_fcntl)(int fd, int cmd, ...);
-//typedef int (*__libc_execl)(const char *path, char *const arg, ...);
 //typedef int (*__libc_execlp)(const char *file, char *const arg, ...);
-//typedef int (*__libc_execlpe)(const char *path, const char *arg,..., char * const envp[]);
+// typedef int (*__libc_execlpe)(const char *path, const char *arg,..., char * const envp[]);
 
  */
+
+// typedef int (*__libc_execl)(const char *path, char *const arg, ...);
+
+//  dhook! {
+//     unsafe fn execl(args: std::ffi::VaListImpl, path: *const c_char, ) -> c_int => execl {
+//         setdebugmode!("execl");
+//         let mut ap: std::ffi::VaListImpl = args.clone();
+//         let mut vecptrs: Vec<_> =  vec!();
+//         let mode: c_int = ap.arg::<c_int>();
+//         event!(Level::INFO, "open({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
+//         TRACKER.reportopen(pathname,flags,mode);
+//         real!(open)(pathname, flags, mode)
+//     }
+// }
+
 
  /* int execv(const char *path, char *const argv[]); */
 
@@ -179,17 +212,10 @@ typedef int (*__libc_fcntl)(int fd, int cmd, ...);
 
  /* int execvp(const char *file, char *const argv[]); */
 
- fn testfunc() {
-    debug(format_args!("Tracker: pid: {}, {:?}\n", std::process::id(), &TRACKER.file));
-    // (&TRACKER.file).write_all(b"Hello, world!").unwrap();
-    // (&TRACKER.file.write_all(format!("Hello World\n").as_bytes()).unwrap();
- }
-
 hook! {
     unsafe fn execvp(file: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => (my_execvp,-1,true) {
         setdebugmode!("execvp");
         // debug(format_args!("execvp({}, {}, {})\n", std::process::id(), CStr::from_ptr(file).to_string_lossy(),utils::cpptr2str(argv, " ")));
-        // testfunc();
         event!(Level::INFO, "execvp({}, {}, \"{}\"F)", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
         TRACKER.reportexecvp(file, argv);
         let mut env = utils::envgetcurrent();
@@ -211,7 +237,6 @@ hook! {
     unsafe fn execvpe(file: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_execvpe,-1,true) {
         setdebugmode!("execvpe");
-        // testfunc();
         // debug(format_args!("execvpe({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "execvpe({}, {}, \"{}\")", UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
         TRACKER.reportexecvpe(file, argv, envp);
@@ -235,7 +260,6 @@ hook! {
     unsafe fn execve(pathname: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_execve,-1,true) {
         setdebugmode!("execve");
-        // testfunc();
         // debug(format_args!("execve({}, {})\n", CStr::from_ptr(pathname).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "execve({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(),utils::cpptr2str(argv, " "));
         TRACKER.reportexecvpe(pathname, argv, envp);
@@ -281,8 +305,9 @@ hook! {
     unsafe fn posix_spawn(pid: *mut libc::pid_t, path: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_posix_spawn,-1,true) {
         setdebugmode!("posix_spawn");
-        event!(Level::INFO, "posix_spawn({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
-        // TRACKER.reportunlinkat(dirfd, pathname, flags);
+        // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
+        event!(Level::INFO, "posix_spawnp({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
+        TRACKER.reportexecvpe(path, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -301,8 +326,10 @@ hook! {
     unsafe fn posix_spawnp(pid: *mut libc::pid_t, file: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_posix_spawnp,-1,true) {
         setdebugmode!("posix_spawnp");
+        // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "posix_spawnp({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
-        // TRACKER.reportposix_spawnp(pid, file, file_actions, attrp, argv, envp);
+        TRACKER.reportexecvpe(file, argv, envp);
+
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -320,11 +347,27 @@ hook! {
 hook! {
     unsafe fn popen(command: *const libc::c_char, ctype: *const libc::c_char) -> *const libc::FILE => (my_popen,-1,true) {
         setdebugmode!("popen");
+        // debug(format_args!("popen({}, {})\n", std::process::id(), CStr::from_ptr(command).to_string_lossy()));
         event!(Level::INFO, "popen({}, {})", &UUID.as_str(), CStr::from_ptr(command).to_string_lossy());
-        // TRACKER.reportpopen(command, ctype);
+        TRACKER.reportpopen(command, ctype);
+        utils::currentenvupdate(&WISKMAP);
         real!(popen)(command, ctype)
     }
 }
+
+/*  int system (const char *command) */
+
+hook! {
+    unsafe fn system(command: *const libc::c_char) -> libc::c_int => my_system {
+        setdebugmode!("system");
+        // debug(format_args!("system({},{})\n", std::process::id(), CStr::from_ptr(command).to_string_lossy()));
+        event!(Level::INFO, "system({}, {})", &UUID.as_str(), CStr::from_ptr(command).to_string_lossy());
+        TRACKER.reportsystem(command);
+        utils::currentenvupdate(&WISKMAP);
+        real!(system)(command)
+    }
+}
+
 
 /* int symlink(const char *target, const char *linkpath); */
 hook! {

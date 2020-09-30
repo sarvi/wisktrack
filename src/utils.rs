@@ -115,17 +115,6 @@ pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>
             } else {
                 env.insert(k.to_string(),v.to_string());
             }
-        // } else if k == "LD_LIBRARY_PATH" {
-        //     if let Some(cv) = env.get_mut(k) {
-        //         for p in v.split(":") {
-        //             if !cv.split(":").any(|i| i==p) {
-        //                 cv.push_str(":");
-        //                 cv.push_str(p);
-        //             }
-        //         }
-        //     } else {
-        //         env.insert(k.to_string(),v.to_string());
-        //     }
         } else {
             env.insert(k.to_string(),v.to_string());
         }
@@ -137,6 +126,25 @@ pub fn envgetcurrent() -> HashMap<String,String> {
                                 .map(|(k,v)| (k.into_string().unwrap(),v.into_string().unwrap()))
                                 .collect();
     hash
+}
+
+pub fn currentenvupdate(fields: &Vec<(String,String)>) {
+    for (k,v) in fields.iter() {
+        if k == "LD_PRELOAD" {
+            if let Ok(mut cv) = env::var(k) {
+                if !cv.split(" ").any(|i| (*i).ends_with("libwisktrack.so")) {
+                    // assert_eq!(true, false, "");
+                    cv.push_str(" ");
+                    cv.push_str(v);
+                    env::set_var(k,cv.as_str());
+                }
+            } else {
+                env::set_var(k,v.as_str());
+            }
+        } else {
+            env::set_var(k,v.as_str());
+        }
+    }
 }
 
 pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
