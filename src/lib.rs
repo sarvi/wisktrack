@@ -169,24 +169,105 @@ hook! {
 
 /* 
 typedef int (*__libc_fcntl)(int fd, int cmd, ...);
-//typedef int (*__libc_execlp)(const char *file, char *const arg, ...);
-// typedef int (*__libc_execlpe)(const char *path, const char *arg,..., char * const envp[]);
 
  */
 
 // typedef int (*__libc_execl)(const char *path, char *const arg, ...);
 
-//  dhook! {
-//     unsafe fn execl(args: std::ffi::VaListImpl, path: *const c_char, ) -> c_int => execl {
-//         setdebugmode!("execl");
-//         let mut ap: std::ffi::VaListImpl = args.clone();
-//         let mut vecptrs: Vec<_> =  vec!();
-//         let mode: c_int = ap.arg::<c_int>();
-//         event!(Level::INFO, "open({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-//         TRACKER.reportopen(pathname,flags,mode);
-//         real!(open)(pathname, flags, mode)
-//     }
-// }
+ dhook! {
+    unsafe fn execl(args: std::ffi::VaListImpl, path: *const c_char) -> c_int => my_execl {
+        setdebugmode!("execl");
+        // debug(format_args!("execl({}):\n", CStr::from_ptr(path).to_string_lossy()));
+        let mut ap: std::ffi::VaListImpl = args.clone();
+        let mut vecptrs: Vec<_> =  vec!();
+        while true {
+            let arg: *const c_char = ap.arg::<* const c_char>();
+            if arg.is_null() {
+                vecptrs.push(arg);
+                break;
+            }
+            vecptrs.push(arg);
+        }
+        let argv = vecptrs.as_ptr();
+
+        event!(Level::INFO, "execl({}, {}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
+        TRACKER.reportexecv(path, argv);
+        let mut env = utils::envgetcurrent();
+        utils::envupdate(&mut env,&WISKMAP);
+        utils::hashmapassert(&env, vec!("LD_PRELOAD"));
+        let envcstr = utils::hashmap2vcstr(&env);
+        // debug(format_args!("execv(): {:?}\n", env));
+        event!(Level::INFO,"execl: {}: Updated Env {:?}", &UUID.as_str(), env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+
+        real!(execve)(path, argv, envp.as_ptr())
+    }
+}
+
+//typedef int (*__libc_execlp)(const char *file, char *const arg, ...);
+
+dhook! {
+    unsafe fn execlp(args: std::ffi::VaListImpl, file: *const c_char) -> c_int => my_execlp {
+        setdebugmode!("execlp");
+        // debug(format_args!("execlp({}):\n", CStr::from_ptr(file).to_string_lossy()));
+        let mut ap: std::ffi::VaListImpl = args.clone();
+        let mut vecptrs: Vec<_> =  vec!();
+        while true {
+            let arg: *const c_char = ap.arg::<* const c_char>();
+            if arg.is_null() {
+                vecptrs.push(arg);
+                break;
+            }
+            vecptrs.push(arg);
+        }
+        let argv = vecptrs.as_ptr();
+        event!(Level::INFO, "execlp({}, {}, {})", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
+        TRACKER.reportexecvp(file, argv);
+        let mut env = utils::envgetcurrent();
+        utils::envupdate(&mut env,&WISKMAP);
+        utils::hashmapassert(&env, vec!("LD_PRELOAD"));
+        let envcstr = utils::hashmap2vcstr(&env);
+        // debug(format_args!("execv=lp(): {:?}\n", env));
+        event!(Level::INFO,"execlp: {}: Updated Env {:?}", &UUID.as_str(), env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+        real!(execvpe)(file, argv, envp.as_ptr())
+    }
+}
+
+// typedef int (*__libc_execlpe)(const char *path, const char *arg,..., char * const envp[]);
+
+dhook! {
+    unsafe fn execle(args: std::ffi::VaListImpl, path: *const c_char) -> c_int => my_execle {
+        setdebugmode!("execle");
+        // debug(format_args!("execle({}):\n", CStr::from_ptr(path).to_string_lossy()));
+        let mut ap: std::ffi::VaListImpl = args.clone();
+        let mut vecptrs: Vec<_> =  vec!();
+        while true {
+            let arg: *const c_char = ap.arg::<* const c_char>();
+            if arg.is_null() {
+                vecptrs.push(arg);
+                break;
+            }
+            vecptrs.push(arg);
+        }
+        let argv = vecptrs.as_ptr();
+        let envp: *const *const libc::c_char = ap.arg::<*const *const libc::c_char>();
+        let mut env = utils::cpptr2hashmap(envp);
+        utils::envupdate(&mut env,&WISKMAP);
+        utils::hashmapassert(&env, vec!("LD_PRELOAD"));
+        let envcstr = utils::hashmap2vcstr(&env);
+        // debug(format_args!("execle(): {:?}\n", env));
+        // event!(Level::INFO,"execle: {}: Updated Env {:?}", TRACKER.uuid, env);
+        let mut envp = utils::vcstr2vecptr(&envcstr);
+        envp.push(std::ptr::null());
+
+        event!(Level::INFO, "execle({}, {}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
+        TRACKER.reportexecv(path, argv);
+        real!(execve)(path, argv, envp.as_ptr())
+    }
+}
 
 
  /* int execv(const char *path, char *const argv[]); */
@@ -222,8 +303,8 @@ hook! {
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env);
-        // debug(format_args!("execvpe: Updated Env {:?}", env));
-        event!(Level::INFO,"execvpe: {}: Updated Env {:?}", &UUID.as_str(), env);
+        // debug(format_args!("execvp: Updated Env {:?}", env));
+        event!(Level::INFO,"execvp: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         real!(execvpe)(file, argv, envp.as_ptr())

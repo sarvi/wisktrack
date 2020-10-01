@@ -108,9 +108,10 @@ pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>
         if k == "LD_PRELOAD" {
             if let Some(cv) = env.get_mut(k) {
                 if !cv.split(" ").any(|i| (*i).ends_with("libwisktrack.so")) {
-                    // assert_eq!(true, false, "");
-                    cv.push_str(" ");
-                    cv.push_str(v);
+                    // Ideally this should be push_str(). insert_str() because 
+                    // XR ljam build uses alib cpio_preload.so that doesnt like this.
+                    cv.insert_str(0, " ");
+                    cv.insert_str(0, v);
                 }
             } else {
                 env.insert(k.to_string(),v.to_string());

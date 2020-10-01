@@ -48,7 +48,7 @@ const SENDLIMIT: usize = 4094;
 // const SENDLIMIT: usize = 100;
 
 const WISK_FIELDS: &'static [&'static str] = &["WISK_TRACE", "WISK_TRACK", "WISK_PUUID", "WISK_WSROOT",
-                                               "LD_PRELOAD", "RUST_BACKTRACE", "LD_DEBUG"];
+                                               "WISK_CONFIG", "LD_PRELOAD", "RUST_BACKTRACE", "LD_DEBUG"];
 
 pub struct Tracker {
     pub file: File,

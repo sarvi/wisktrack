@@ -36,8 +36,6 @@ do
     elif [[ $1 == -strace ]];  then
         echo "Option: $1"
         DOSTRACE=true
-        STRACE="strace -E LD_PRELOAD=$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so -E WISK_TRACK=/tmp/track.file -ff -q -o trace.log"
-        echo "STRACE=$STRACE"
         shift
     else
         break
@@ -63,7 +61,7 @@ rm -rf $WISK_TRACK
 echo "Starting....."
 
 if [[ -z $DOSTRACE ]]; then
-env -i LD_DEBUG="$LD_DEBUG" RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" "$@"
+time env -i LD_DEBUG="$LD_DEBUG" RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" "$@"
 else
-env -i strace -E LD_PRELOAD=$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so -ff -v -q -o $STRACEDIR/strace.log -E LD_DEBUG="$LD_DEBUG" -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" "$@"
+time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -q -o $STRACEDIR/strace.log -E LD_DEBUG="$LD_DEBUG" -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" "$@"
 fi
