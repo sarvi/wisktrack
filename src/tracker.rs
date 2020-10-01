@@ -155,7 +155,7 @@ pub fn initialize_statics() {
     lazy_static::initialize(&WISKMAP);
     lazy_static::initialize(&ENV);
     lazy_static::initialize(&CMDLINE);
-    // lazy_static::initialize(&TRACKER);
+    lazy_static::initialize(&TRACKER);
 }
 
 
