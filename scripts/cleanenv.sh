@@ -45,17 +45,19 @@ done
 echo "Args: $*"
 
 RUST_BACKTRACE=1
+# WISK_TRACK=
 # rm -f `pwd`/wisktrack.pipe
 # mknod `pwd`/wisktrack.pipe p
 # WISK_TRACK=`pwd`/wisktrack.pipe
-WISK_TRACK=`pwd`/wisktrack.file
+# WISK_TRACK=`pwd`/wisktrack.file
+# WISK_TRACK=`pwd`/wisktrack
+WISK_TRACK=wisktrack.file
 LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
 STRACEDIR="strace/"
 echo "LD_PRELOAD: $LD_PRELOAD"
 echo "WISK_TRACK: $WISK_TRACK"
 
 rm -rf $STRACEDIR ; mkdir $STRACEDIR
-rm -f $WISK_TRACE
 rm -f $WISK_TRACE
 rm -rf $WISK_TRACK
 echo "Starting....."

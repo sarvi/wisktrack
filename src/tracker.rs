@@ -57,19 +57,27 @@ pub struct Tracker {
 
 
 lazy_static! {
+    pub static ref CWD : String = {
+        let cwdostr = env::current_dir().unwrap().into_os_string();
+        let mut rv = cwdostr.into_string().unwrap();
+        // debug(format_args!("CWD: {}\n", rv.as_str()));
+        rv
+    };
     pub static ref WSROOT : String = {
-        match env::var("WISK_WSROOT") {
+        let rv = match env::var("WISK_WSROOT") {
             Ok(mut wsroot) => {
-                if !wsroot.ends_with("/") {
-                    wsroot.push_str("/")
+                if wsroot.is_empty() {
+                    wsroot.push_str(CWD.as_str());
                 }
                 if !Path::new(&wsroot).exists() {
                     create_dir_all(&wsroot).unwrap();
                 }
                 wsroot
             },
-            Err(_) => String::new(),
-        }
+            Err(_) => CWD.to_owned(),
+        };
+        // debug(format_args!("WSROOT: {}\n", rv.as_str()));
+        rv
     };
     pub static ref PUUID:String = {
         match env::var("WISK_PUUID") {
@@ -79,37 +87,37 @@ lazy_static! {
     };
     pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
     pub static ref PID : String = process::id().to_string();
-    pub static ref CWD : String = { 
-        let cwdostr = env::current_dir().unwrap().into_os_string();
-        cwdostr.into_string().unwrap()
-    };
 
     pub static ref WISKTRACK:String = {
         // debug(format_args!("Here\n"));        
-        let fname = match var("WISK_TRACK") {
-            Ok(v) => v,
-            Err(_) => {
-                // debug(format_args!("WISK_TRACK is missing\n"));
-                if WSROOT.is_empty() {
-                    if !Path::new("/tmp/wisktrack").exists() {
-                        create_dir_all("/tmp/wisktrack").unwrap();
-                    }
-                    String::from(format!("/tmp/wisktrack/track.{}", UUID.as_str()))
+        let mut fname:String = match var("WISK_TRACK") {
+            Ok(v) =>  {
+                if v.is_empty() {
+                    String::from(format!("{}/track.file", WSROOT.as_str()))
                 } else {
-                    String::from(format!("{:?}/wisktrack/track.{:?}", WSROOT.as_str(), UUID.as_str()))
+                    v
                 }
             },
+            Err(_) => {
+                // debug(format_args!("WISK_TRACK is missing\n"));
+                String::from(format!("{}/track.file", WSROOT.as_str()))
+            },
         };
-        if !Path::new(&fname).parent().unwrap().exists() {
-            create_dir_all(Path::new(&fname).parent().unwrap()).unwrap();
+        if !fname.ends_with(".file")  {
+            let t = format!("/wisktrack.{}", &UUID.as_str());
+            fname.push_str(&t);
+            // debug(format_args!("Updated Trackfile: {}\n", &fname));
         }
-        let trackdir = Path::new(&fname).parent().unwrap();
-        if !metadata(&trackdir).unwrap().is_dir() {
-            create_dir_all(trackdir).unwrap();
+        if !fname.starts_with("/") {
+            fname.insert_str(0, "/");
+            fname.insert_str(0, WSROOT.as_str());
         }
-        let fname = if Path::new(&fname).exists() && metadata(&fname).unwrap().is_dir() {
-            String::from(format!("{}/wisk_track.{:?}", fname, UUID.as_str()))
-        } else { String::from(&fname) };
+        let p = Path::new(&fname);
+        if !p.parent().unwrap().exists() {
+            debug(format_args!("parent: {:?}", p.parent().unwrap()));
+            create_dir_all(p.parent().unwrap()).unwrap();
+        }
+        // debug(format_args!("WISKTRACK: {}\n", fname.as_str()));
         fname
     };
     pub static ref WISKMAP : Vec<(String, String)> = {
