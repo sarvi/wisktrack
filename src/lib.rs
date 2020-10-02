@@ -135,7 +135,10 @@ dhook! {
 // #endif */
 hook! {
     unsafe fn close(fd : c_int ) -> c_int => my_close {
-        setdebugmode!("close");
+        // We cannot do any mallocsas this can cause recursion, if this code is executed
+        // from a signal handler closing files and cleaning up a exited/forked process, while
+        // the main thread is also in malloc.
+        // setdebugmode!("close");
         if fd != TRACKER.fd {
             // debug(format_args!("close({})\n", fd));
             event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
@@ -386,7 +389,7 @@ hook! {
     unsafe fn posix_spawn(pid: *mut libc::pid_t, path: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_posix_spawn,-1,true) {
         setdebugmode!("posix_spawn");
-        // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
+        // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "posix_spawnp({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
         TRACKER.reportexecvpe(path, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
