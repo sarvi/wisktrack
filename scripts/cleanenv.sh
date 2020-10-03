@@ -49,9 +49,9 @@ RUST_BACKTRACE=1
 # rm -f `pwd`/wisktrack.pipe
 # mknod `pwd`/wisktrack.pipe p
 # WISK_TRACK=`pwd`/wisktrack.pipe
-# WISK_TRACK=`pwd`/wisktrack.file
+WISK_TRACK=`pwd`/wisktrack.file
 # WISK_TRACK=`pwd`/wisktrack
-WISK_TRACK=wisktrack.file
+# WISK_TRACK=wisktrack.file
 LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
 STRACEDIR="strace/"
 echo "LD_PRELOAD: $LD_PRELOAD"

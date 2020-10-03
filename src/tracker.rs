@@ -220,17 +220,21 @@ macro_rules! check_err {
 impl Tracker {
     pub fn new() -> Tracker {
         // debug(format_args!("Tracker Initializer\n"));
-        let f = OpenOptions::new().create(true).append(true).open(&*WISKTRACK).unwrap();
-        let tempfd = f.into_raw_fd();
-        let fd = dup2(tempfd, TRACKERFD).unwrap();
-        let tracker = Tracker {
-            file :  unsafe { FromRawFd::from_raw_fd(fd) },
-            fd : fd,
-        };
-        // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
-        // debug(format_args!("Tracker File: {:?}\n", tracker.file));
-        // debug(format_args!("Tracker Initializer: Done\n"));
-        tracker
+        if let Ok(f) = OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
+            let tempfd = f.into_raw_fd();
+            let fd = dup2(tempfd, TRACKERFD).unwrap();
+            let tracker = Tracker {
+                file :  unsafe { FromRawFd::from_raw_fd(fd) },
+                fd : fd,
+            };
+            // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
+            // debug(format_args!("Tracker File: {:?}\n", tracker.file));
+            // debug(format_args!("Tracker Initializer: Done\n"));
+            tracker
+        } else {
+            debug(format_args!("Error opening track file: {}\n", WISKTRACK.as_str()));
+            std::panic!();
+        }
     }
 
     pub fn initialize(&self) {
