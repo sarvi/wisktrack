@@ -13,6 +13,7 @@ extern crate lazy_static;
 extern crate tracing_appender;
 extern crate tracing_subscriber;
 extern crate backtrace;
+extern crate config;
 
 mod tracker;
 mod utils;

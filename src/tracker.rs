@@ -7,7 +7,7 @@ use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd};
 use std::io::prelude::*;
 use std::io::{Error, Read, Result, Write};
 use std::path::{Path, PathBuf};
-use std::fs::{File, OpenOptions, metadata, create_dir_all};
+use std::fs;
 use std::string::String;
 use std::env::var;
 use std::process;
@@ -25,6 +25,7 @@ use tracing::{Level, event, };
 use redhook::debug;
 use backtrace::Backtrace;
 use crate::utils;
+use config::Config;
 
 pub const DEBUGMODE:bool = true;
 
@@ -47,19 +48,63 @@ const TRACKERFD: c_int = 800;
 const SENDLIMIT: usize = 4094;
 // const SENDLIMIT: usize = 100;
 
-const WISK_FIELDS: &'static [&'static str] = &["WISK_TRACE", "WISK_TRACK", "WISK_PUUID", "WISK_WSROOT",
-                                               "WISK_CONFIG", "LD_PRELOAD", "RUST_BACKTRACE", "LD_DEBUG"];
+const WISK_FIELDS: &'static [&'static str] = &[
+    "WISK_TRACE", "WISK_TRACK", "WISK_PUUID", "WISK_WSROOT", "WISK_CONFIG",
+    "WISK_CONFIG", "LD_PRELOAD", "RUST_BACKTRACE", "LD_DEBUG"];
+
+const CONFIG_DEFAULTS: &str = "
+[tracking]
+wsonly = true
+";
 
 pub struct Tracker {
-    pub file: File,
+    pub file: fs::File,
     pub fd: i32,
 }
 
 
 lazy_static! {
+    pub static ref LDPRELOAD:String = {
+        match env::var("LD_PRELOAD") {
+            Ok(uuid) => uuid,
+            Err(_) => panic!(),
+        }
+    };
+
+    pub static ref CONFIG : Config = {
+        let mut config = config::Config::default();
+        config.merge(config::Environment::with_prefix("WISK")).unwrap();
+        if let Ok(cfgdefault) = Path::new(LDPRELOAD.as_str())
+                             .parent().unwrap().parent().unwrap()
+                             .join("config/default.ini")
+                             .canonicalize() {
+            if let Err(e) = config.merge(config::File::from(cfgdefault.to_owned())) {
+                debug(format_args!("Error reading config file: {:?}\n", &cfgdefault))
+            }
+            if let Ok(cfile) = env::var("WISK_CONFIG") {
+                // debug(format_args!("WISK_CONFIG: {:?}\n", cfile));
+                if cfile.is_empty() {
+                    // debug(format_args!("Config: {:?}\n", config));
+                    config
+                } else {
+                    // debug(format_args!("Reading config file: {}\n", cfile));
+                    config.merge(config::File::with_name(cfile.as_str())).unwrap();
+                    debug(format_args!("Config: {:?}\n", config.to_owned().try_into::<HashMap<String, String>>().unwrap()));
+                    config
+                }
+            } else {
+                // debug(format_args!("Config: {:?}\n", config));
+                config
+            }
+        } else {
+                // debug(format_args!("Error reading config file: config/default.ini\n"));
+                panic!()
+        }
+    };
+
     pub static ref CWD : String = {
         let cwdostr = env::current_dir().unwrap().into_os_string();
-        let mut rv = cwdostr.into_string().unwrap();
+        let rv = cwdostr.into_string().unwrap();
         // debug(format_args!("CWD: {}\n", rv.as_str()));
         rv
     };
@@ -70,7 +115,7 @@ lazy_static! {
                     wsroot.push_str(CWD.as_str());
                 }
                 if !Path::new(&wsroot).exists() {
-                    create_dir_all(&wsroot).unwrap();
+                    fs::create_dir_all(&wsroot).unwrap();
                 }
                 wsroot
             },
@@ -115,7 +160,7 @@ lazy_static! {
         let p = Path::new(&fname);
         if !p.parent().unwrap().exists() {
             debug(format_args!("parent: {:?}", p.parent().unwrap()));
-            create_dir_all(p.parent().unwrap()).unwrap();
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
         }
         // debug(format_args!("WISKTRACK: {}\n", fname.as_str()));
         fname
@@ -146,6 +191,8 @@ lazy_static! {
 }
 
 pub fn initialize_statics() {
+    lazy_static::initialize(&LDPRELOAD);
+    lazy_static::initialize(&CONFIG);
     lazy_static::initialize(&WSROOT);
     lazy_static::initialize(&PUUID);
     lazy_static::initialize(&UUID);
@@ -160,7 +207,7 @@ pub fn initialize_statics() {
 
 
 fn fd2path (fd : c_int ) -> PathBuf {
-    // let f = unsafe { File::from_raw_fd(fd) };
+    // let f = unsafe { fs::File::from_raw_fd(fd) };
     // let fp = f.path().unwrap();
     // // println!("{}",fp.as_path().to_str().unwrap());
     // f.into_raw_fd();
@@ -220,7 +267,7 @@ macro_rules! check_err {
 impl Tracker {
     pub fn new() -> Tracker {
         // debug(format_args!("Tracker Initializer\n"));
-        if let Ok(f) = OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
+        if let Ok(f) = fs::OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
             let tempfd = f.into_raw_fd();
             let fd = dup2(tempfd, TRACKERFD).unwrap();
             let tracker = Tracker {
@@ -497,7 +544,7 @@ impl Tracker {
 //     #[test]
 //     fn report_test_000() -> io::Result<()> {
 //         TRACKER.report("test_000", "");
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(!buffer.contains(&format!("\n\n")));
@@ -509,7 +556,7 @@ impl Tracker {
 //     fn report_test_001() -> io::Result<()> {
 //         TRACKER.report("test_001", "D");
 //         println!("FileName: {}", TRACKER.filename);
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} test_001 D\n", TRACKER.uuid)));
@@ -520,7 +567,7 @@ impl Tracker {
 //     fn report_test_002() -> io::Result<()> {
 //         TRACKER.report("test_002", &"D".repeat(SENDLIMIT-32));
 //         println!("FileName: {}", TRACKER.filename);
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} test_002 {}\n", TRACKER.uuid, &"D".repeat(SENDLIMIT-32))));
@@ -531,7 +578,7 @@ impl Tracker {
 //     fn report_tests_003() -> io::Result<()> {
 //         TRACKER.report("test_003", &"D".repeat(SENDLIMIT-31));
 //         println!("FileName: {}", TRACKER.filename);
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} test_003 {}\n", TRACKER.uuid, &"D".repeat(SENDLIMIT-32))));
@@ -543,7 +590,7 @@ impl Tracker {
 //     fn report_test_004() -> io::Result<()> {
 //         TRACKER.report("test_004", &"D".repeat(SENDLIMIT*2-9));
 //         println!("FileName: {}", TRACKER.filename);
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} test_004 {}\n", TRACKER.uuid, &"D".repeat(SENDLIMIT-32))));
@@ -555,7 +602,7 @@ impl Tracker {
 //     fn report_test_005() -> io::Result<()> {
 //         TRACKER.report("test_005", &"D".repeat(SENDLIMIT*2-(32*2)));
 //         println!("FileName: {}", TRACKER.filename);
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} test_005 {}\n", TRACKER.uuid, &"D".repeat(SENDLIMIT-32))));
@@ -578,7 +625,7 @@ impl Tracker {
 //             TRACKER.reportlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("/x/y/link").unwrap().as_ptr());
 //             TRACKER.reportlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("x/y/link").unwrap().as_ptr());
 //         }
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/link\"]\n", TRACKER.uuid)));
@@ -594,7 +641,7 @@ impl Tracker {
 //             TRACKER.reportlinkat(fd, CString::new("/a/b/c").unwrap().as_ptr(),fd, CString::new("/x/y/linkat").unwrap().as_ptr(), 300);
 //             TRACKER.reportlinkat(fd, CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/linkat").unwrap().as_ptr(), 300);
 //         };
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/linkat\",300]\n", TRACKER.uuid)));
@@ -609,7 +656,7 @@ impl Tracker {
 //             TRACKER.reportsymlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("/x/y/symlink").unwrap().as_ptr());
 //             TRACKER.reportsymlink(CString::new("/a/b/c").unwrap().as_ptr(),CString::new("x/y/symlink").unwrap().as_ptr());
 //         }
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/symlink\"]\n", TRACKER.uuid)));
@@ -625,7 +672,7 @@ impl Tracker {
 //             TRACKER.reportsymlinkat(CString::new("/a/b/c").unwrap().as_ptr(),fd, CString::new("/x/y/symlinkat").unwrap().as_ptr());
 //             TRACKER.reportsymlinkat(CString::new("a/b/c").unwrap().as_ptr(),fd, CString::new("x/y/symlinkat").unwrap().as_ptr());
 //         };
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} LINKS [\"/a/b/c\",\"/x/y/symlinkat\"]\n", TRACKER.uuid)));
@@ -639,7 +686,7 @@ impl Tracker {
 //         unsafe {
 //             TRACKER.reportunlink(CString::new("/a/b/unlink").unwrap().as_ptr());
 //         }
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} UNLINKS [\"/a/b/unlink\"]\n", TRACKER.uuid)));
@@ -654,7 +701,7 @@ impl Tracker {
 //             TRACKER.reportunlinkat(fd, CString::new("/a/b/unlinkat").unwrap().as_ptr(),300);
 //             TRACKER.reportunlinkat(fd, CString::new("a/b/unlinkat").unwrap().as_ptr(),300);
 //         };
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} UNLINKS [\"/a/b/unlinkat\",300]\n", TRACKER.uuid)));
@@ -668,7 +715,7 @@ impl Tracker {
 //         unsafe {
 //             TRACKER.reportchmod(CString::new("/a/b/chmod").unwrap().as_ptr(), 0);
 //         }
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} CHMODS [\"/a/b/chmod\",0]\n", TRACKER.uuid)));
@@ -682,7 +729,7 @@ impl Tracker {
 //             let fd = dirfd(opendir(CString::new("/tmp").unwrap().as_ptr()));
 //             TRACKER.reportfchmod(fd,0);
 //         };
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} CHMODS [\"/tmp\",0]\n", TRACKER.uuid)));
@@ -697,7 +744,7 @@ impl Tracker {
 //             TRACKER.reportfchmodat(fd, CString::new("/a/b/fchmodat").unwrap().as_ptr(),0,0);
 //             TRACKER.reportfchmodat(fd, CString::new("a/b/fchmodat").unwrap().as_ptr(),0,0);
 //         };
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} CHMODS [\"/a/b/fchmodat\",0,0]\n", TRACKER.uuid)));
@@ -712,7 +759,7 @@ impl Tracker {
 //             TRACKER.reportcreat(CString::new("/a/b/creat").unwrap().as_ptr(),0);
 //             TRACKER.reportcreat(CString::new("a/b/creat").unwrap().as_ptr(),0);
 //         };
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} WRITES [\"/a/b/creat\",0]\n", TRACKER.uuid)));
@@ -731,7 +778,7 @@ impl Tracker {
 //             TRACKER.reportfopen(CString::new("/a/b/appends").unwrap().as_ptr(),CString::new("a").unwrap().as_ptr());
 //             TRACKER.reportfopen(CString::new("/a/b/appendsplus").unwrap().as_ptr(),CString::new("a+").unwrap().as_ptr());
 //         }
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} READS [\"/a/b/reads\",\"r\"]\n", TRACKER.uuid)));
@@ -765,7 +812,7 @@ impl Tracker {
 //             TRACKER.reportexecv(CString::new("/a/b/execv").unwrap().as_ptr(), p_argv.as_ptr());
 //             TRACKER.reportexecv(CString::new("a/b/execv").unwrap().as_ptr(), p_argv.as_ptr());
 //         }
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} EXECUTES [\"/a/b/execv\",[\"arg1\",\"arg2\",\"arg3\"]]\n", TRACKER.uuid)));
@@ -796,7 +843,7 @@ impl Tracker {
 //             TRACKER.reportexecvpe(CString::new("/a/b/execvpe").unwrap().as_ptr(), p_args.as_ptr(), p_env.as_ptr());
 //             TRACKER.reportexecvpe(CString::new("a/b/execvpe").unwrap().as_ptr(), p_args.as_ptr(), p_env.as_ptr());
 //         }
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} EXECUTES [\"/a/b/execvpe\",[\"arg1\",\"arg2\",\"arg3\"],[[\"A\",\"B\"],[\"C\",\"D\"],[\"E\",\"F\"]]]\n", TRACKER.uuid)));
@@ -811,7 +858,7 @@ impl Tracker {
 //             TRACKER.reportpopen(CString::new("echo \"something\"").unwrap().as_ptr(),
 //                                 CString::new("ctype").unwrap().as_ptr());
 //         };
-//         let mut rfile = File::open(&TRACKER.filename)?;
+//         let mut rfile = fs::File::open(&TRACKER.filename)?;
 //         let mut buffer = String::new();
 //         rfile.read_to_string(&mut buffer)?;
 //         assert!(buffer.contains(&format!("{} EXECUTES [\"/bin/sh\",\"echo \\\"something\\\"\",\"ctype\"]\n", TRACKER.uuid)));

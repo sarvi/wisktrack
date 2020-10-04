@@ -44,8 +44,10 @@ $(ROOT)/lib32/libwisktrack.so: target/i686-unknown-linux-gnu/debug/libwisktrack.
 
 $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 	echo "install scripts"
-	mkdir -p $(ROOT)/bin/
-	install -D -m a+rwx scripts/cleanenv.sh $(ROOT)/bin/
+	mkdir -p $(ROOT)/bin
+	mkdir -p $(ROOT)/config
+	install -D scripts/cleanenv.sh $(ROOT)/bin/
+	install -D config/default.ini $(ROOT)/config/
 
 .PHONY: tests
 tests: tests/testprog64 tests/testprog32 basics | cargo-tests

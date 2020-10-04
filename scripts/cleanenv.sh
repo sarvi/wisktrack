@@ -33,6 +33,11 @@ do
         WISK_WSROOT=${1##*-wsroot=}
         echo "WISK_WSROOT: $WISK_WSROOT"
         shift
+    elif [[ $1 == -config=* ]];  then
+        echo "Option: $1"
+        WISK_CONFIG=${1##*-config=}
+        echo "WISK_CONFIG: $WISK_CONFIG"
+        shift
     elif [[ $1 == -strace ]];  then
         echo "Option: $1"
         DOSTRACE=true
@@ -63,7 +68,7 @@ rm -rf $WISK_TRACK
 echo "Starting....."
 
 if [[ -z $DOSTRACE ]]; then
-time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" "$@"
+time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" "$@"
 else
-time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" "$@"
+time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" "$@"
 fi
