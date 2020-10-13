@@ -9,6 +9,7 @@ basics:
 	ln -sf target/i686-unknown-linux-gnu/debug lib
 	ln -sf target/i686-unknown-linux-gnu/debug lib32
 	ln -sf target/debug lib64
+	ln -sf ./ wisk
 
 tests/testprog64: tests/test.c
 	echo "tests/testprog64"

@@ -5,7 +5,7 @@ use std::ffi::{CStr, OsString};
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd};
 // use std::sync::Mutex;
 use std::io::prelude::*;
-use std::io::{Error, Read, Result, Write};
+use std::io::{Error, Read, Write};
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::string::String;
@@ -24,8 +24,9 @@ use tracing::{Level, event, };
 // use redhook::ld_preload::make_dispatch;
 use redhook::debug;
 use backtrace::Backtrace;
+use string_template::Template;
+use regex::{RegexSet, escape};
 use crate::utils;
-use config::Config;
 
 pub const DEBUGMODE:bool = true;
 
@@ -43,6 +44,50 @@ macro_rules! setdebugmode {
     };
 }
 
+// #[derive(Default, Debug, serde::Deserialize, PartialEq)]
+// pub struct Config {
+//     only64bit: String,
+//     build: Vec<Foo>,
+// }
+
+// #[derive(Debug, serde::Deserialize, PartialEq)]
+// #[serde(untagged)]
+// enum Foo {
+//     Step(Step),
+//     Bar(String),
+// }
+
+// #[derive(Debug, serde::Deserialize, PartialEq)]
+// struct Step {
+//     name: String,
+//     #[serde(rename = "do")]
+//     make: Option<String>,
+//     put: Option<String>,
+//     get: Option<String>,
+// }
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Deserialize)]
+pub struct Config {
+    // #[serde(default)]
+    // bit64: BTreeMap<String, String>,
+    #[serde(default)]
+    app64bit_patterns: Vec<String>,
+}
+
+// impl Default for Config {
+//     fn default() -> Self {
+//         Config {
+//             foo: "something".to_owned().into(),
+//             bar: HashMap::new(),
+//             numbers: vec![1, 2, 3],
+//         }
+//     }
+// }
+
+const CONFIG_DEFAULTS: &str = "
+---
+";
+
 const TRACKERFD: c_int = 800;
 
 const SENDLIMIT: usize = 4094;
@@ -52,11 +97,6 @@ const WISK_FIELDS: &'static [&'static str] = &[
     "WISK_TRACE", "WISK_TRACK", "WISK_PUUID", "WISK_WSROOT", "WISK_CONFIG",
     "WISK_CONFIG", "LD_PRELOAD", "RUST_BACKTRACE", "LD_DEBUG"];
 
-const CONFIG_DEFAULTS: &str = "
-[tracking]
-wsonly = true
-";
-
 pub struct Tracker {
     pub file: fs::File,
     pub fd: i32,
@@ -64,41 +104,10 @@ pub struct Tracker {
 
 
 lazy_static! {
-    pub static ref LDPRELOAD:String = {
+    pub static ref LD_PRELOAD:String = {
         match env::var("LD_PRELOAD") {
             Ok(uuid) => uuid,
             Err(_) => panic!(),
-        }
-    };
-
-    pub static ref CONFIG : Config = {
-        let mut config = config::Config::default();
-        config.merge(config::Environment::with_prefix("WISK")).unwrap();
-        if let Ok(cfgdefault) = Path::new(LDPRELOAD.as_str())
-                             .parent().unwrap().parent().unwrap()
-                             .join("config/default.ini")
-                             .canonicalize() {
-            if let Err(e) = config.merge(config::File::from(cfgdefault.to_owned())) {
-                debug(format_args!("Error reading config file: {:?}\n", &cfgdefault))
-            }
-            if let Ok(cfile) = env::var("WISK_CONFIG") {
-                // debug(format_args!("WISK_CONFIG: {:?}\n", cfile));
-                if cfile.is_empty() {
-                    // debug(format_args!("Config: {:?}\n", config));
-                    config
-                } else {
-                    // debug(format_args!("Reading config file: {}\n", cfile));
-                    config.merge(config::File::with_name(cfile.as_str())).unwrap();
-                    debug(format_args!("Config: {:?}\n", config.to_owned().try_into::<HashMap<String, String>>().unwrap()));
-                    config
-                }
-            } else {
-                // debug(format_args!("Config: {:?}\n", config));
-                config
-            }
-        } else {
-                // debug(format_args!("Error reading config file: config/default.ini\n"));
-                panic!()
         }
     };
 
@@ -108,6 +117,7 @@ lazy_static! {
         // debug(format_args!("CWD: {}\n", rv.as_str()));
         rv
     };
+
     pub static ref WSROOT : String = {
         let rv = match env::var("WISK_WSROOT") {
             Ok(mut wsroot) => {
@@ -124,13 +134,34 @@ lazy_static! {
         // debug(format_args!("WSROOT: {}\n", rv.as_str()));
         rv
     };
+
+    pub static ref CONFIG : Config = {
+        let rv : Result<Config,String> = utils::read_config(WSROOT.as_str(), "wisktrack.ini");
+        match rv {
+            Ok(config) => { config }
+            Err(e) => {
+                eprintln!("{}", e);
+                let rv : Result<Config, serde_yaml::Error> = serde_yaml::from_str(CONFIG_DEFAULTS);
+                match rv {
+                    Ok(config) =>  config,
+                    Err(e) => {
+                        eprintln!("{}", e);
+                        panic!()
+                    }
+                }
+            }
+        }
+    };
+
     pub static ref PUUID:String = {
         match env::var("WISK_PUUID") {
             Ok(uuid) => uuid,
             Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
         }
     };
+
     pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
+
     pub static ref PID : String = process::id().to_string();
 
     pub static ref WISKTRACK:String = {
@@ -165,6 +196,7 @@ lazy_static! {
         // debug(format_args!("WISKTRACK: {}\n", fname.as_str()));
         fname
     };
+
     pub static ref WISKMAP : Vec<(String, String)> = {
         // debug(format_args!("WISKMAP\n"));
         let mut wiskmap: Vec<(String, String)> = utils::envextractwisk(WISK_FIELDS.to_vec());
@@ -172,6 +204,7 @@ lazy_static! {
         // debug(format_args!("WISKMAP: {:?}", &wiskmap));
         wiskmap
     };
+
     pub static ref ENV : HashMap<String, String> = {
         let mut map = HashMap::new();
         for (key, val) in env::vars_os() {
@@ -182,29 +215,74 @@ lazy_static! {
         }
         map
     };
+
     pub static ref CMDLINE: Vec<String> = std::env::args().map(|x| x).collect();
+
     pub static ref TRACKER : Tracker = Tracker::new();
-    // pub static ref WISKFDS : Vec<i32> = {
-    //     let x= vec!();
-    //     x.push(TRACKER.)
-    // }
+
+    pub static ref MAPFIELDS: Vec<(String,String)> = {
+        let mut v: Vec<(String,String)> = [
+            ("LD_PRELOAD", LD_PRELOAD.as_str()),
+            ("CWD", CWD.as_str()),
+            ("WSROOT", WSROOT.as_str()),
+            ("PUUID", PUUID.as_str()),
+            ("UUID", UUID.as_str()),
+            ("PID", PID.as_str()),
+            ("WISKTRACK", WISKTRACK.as_str()),
+        ].iter().map(|i| (i.0.to_owned(), i.1.to_owned())).collect();
+        for n in 0..v.len() {
+            let mut x=v[n].0.to_owned();
+            x.insert_str(0, "RE_");
+            v.push((x,escape(v[n].1.as_str())))
+        }
+        // eprintln!("MAPFIELDS: {:?}", v);
+        v
+    };
+
+    pub static ref TEMPLATEMAP: HashMap<&'static str,&'static str> = {
+        let mut v: Vec<(&str, &str)> = vec!();
+        for i in MAPFIELDS.iter() {
+            v.push((&i.0,i.1.as_str()));
+        }
+        let templmap:HashMap<&'static str,&'static str> = v.iter().cloned().collect();
+        // eprintln!("TEMPLATEMAP: {:#?}", templmap);
+
+        templmap
+    };
+
+    pub static ref  APP64BIT_PATTERNS: RegexSet = {
+        let p: Vec<String> = CONFIG.app64bit_patterns.iter().map(|v| render(v,&TEMPLATEMAP)).collect();
+        // eprintln!("p: {:?}", p);
+        let x = RegexSet::new(&p).unwrap_or_else(|e| {
+            eprintln!("Error compiling list of regex in app_64bit_match: {:?}", e);
+            panic!()
+        });
+        x
+    };
+
 }
 
 pub fn initialize_statics() {
-    lazy_static::initialize(&LDPRELOAD);
-    lazy_static::initialize(&CONFIG);
+    lazy_static::initialize(&LD_PRELOAD);
+    lazy_static::initialize(&CWD);
     lazy_static::initialize(&WSROOT);
+    lazy_static::initialize(&CONFIG);
     lazy_static::initialize(&PUUID);
     lazy_static::initialize(&UUID);
     lazy_static::initialize(&PID);
-    lazy_static::initialize(&CWD);
     lazy_static::initialize(&WISKTRACK);
     lazy_static::initialize(&WISKMAP);
     lazy_static::initialize(&ENV);
     lazy_static::initialize(&CMDLINE);
     lazy_static::initialize(&TRACKER);
+    lazy_static::initialize(&MAPFIELDS);
+    lazy_static::initialize(&TEMPLATEMAP);
+    lazy_static::initialize(&APP64BIT_PATTERNS);
 }
 
+pub fn render(field: &str, vals: &HashMap<&str, &str>) -> String {
+    Template::new(field).render(vals)
+}
 
 fn fd2path (fd : c_int ) -> PathBuf {
     // let f = unsafe { fs::File::from_raw_fd(fd) };

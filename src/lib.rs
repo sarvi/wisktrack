@@ -9,11 +9,15 @@ extern crate ctor;
 extern crate paste;
 extern crate nix;
 #[macro_use]
+extern crate serde_derive;
+extern crate serde_yaml;
+#[macro_use]
 extern crate lazy_static;
 extern crate tracing_appender;
 extern crate tracing_subscriber;
 extern crate backtrace;
-extern crate config;
+extern crate string_template;
+extern crate regex;
 
 mod tracker;
 mod utils;

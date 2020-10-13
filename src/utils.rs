@@ -4,19 +4,20 @@ use std::ffi::{CStr, CString};
 use std::{env, ptr};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use nix::fcntl::OFlag;
-use std::io::{Error, Read, Result, Write};
+use std::io::{Read, Write};
+use std::fmt;
+use std::error;
 use libc::{c_char,c_int, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd, RawFd};
-use std::collections::HashMap;
-use std::fs::File;
+use std::collections::{HashMap, BTreeMap};
+use std::path::{Path, PathBuf};
+use std::fs::{File,read_to_string};
 use nix::unistd::dup3;
 use tracing::{Level, event};
 use redhook::debug;
+use serde::de;
 
-// static COUNTER: Mutex<Cell<i32>> = Mutex::new(Cell::new(0));
-// static mut wiskfd: Mutex<i32> = Mutex::new(800);
 pub static WISKFD: AtomicUsize = AtomicUsize::new(800);
-
 
 pub fn vcstr2vecptr(vcstr: &Vec<CString>) -> Vec<*const c_char> {
     let vecptr: Vec<_> = vcstr.iter() // do NOT into_iter()
@@ -160,6 +161,20 @@ pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
     wiskmap
 }
 
+// pub fn getexecutable(file: *const c_char, argv: *const *const libc::c_char,
+//                      mut env: HashMap<String,String>)
+//                      -> (*const c_char, Vec<CString>, *const *const libc::c_char) {
+//     if unsafe { *file } == b'/' {
+//         utils::envupdate(&mut env,&WISKMAP);
+//         (file, argv, vec!(), env)
+//     } else {
+//         // filestr = CStr::from_ptr(file);
+//         utils::envupdate(&mut env,&WISKMAP);
+//         (file, argv, vec!(), env)
+//     }
+// }
+
+
 pub fn internal_open(filename: &str, mode: i32) -> File {
     let fd = WISKFD.fetch_add(1, Ordering::Relaxed) as i32;
     let filename = CString::new(filename).unwrap();
@@ -172,6 +187,33 @@ pub fn internal_open(filename: &str, mode: i32) -> File {
     debug(format_args!("File Descriptor: {}, {:?}", tempfd, &f));
     (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
     f
+}
+
+pub fn read_config<T>(basepath: &str, conf: &str) -> Result<T, String>
+where
+    T: de::DeserializeOwned,
+{
+    let cfgpath: PathBuf;
+    if basepath.ends_with("libwisktrack.so") {
+        let c = Path::new(basepath).parent().ok_or_else(|| {
+            format!("Error accessing path parent of {}\n", basepath)
+        })?;
+        let c = c.parent().ok_or_else(|| {
+            format!("Error accessing path parent of {}\n", c.display())
+        })?;
+        cfgpath = c.to_path_buf();
+    } else {
+        cfgpath = Path::new(basepath).join("wisk");
+    }
+    let cfgpath = Path::new(&cfgpath).join("config").join(conf).canonicalize().map_err(
+        |e| format!("Error finding {} path: {:?}", e.to_string(), cfgpath)
+    )?;
+    let content = read_to_string(cfgpath.to_owned()).map_err(
+        |e| format!("Error reading {} path: {:?}", e.to_string(), cfgpath)
+    )?;
+    serde_yaml::from_str(content.as_str()).map_err(
+        |e| format!("Error parsing {} path: {:?}", e.to_string(), cfgpath)
+    )
 }
 
 
@@ -250,10 +292,87 @@ mod env_tests {
         Ok(())
     }
 
+    // #[test]
+    // fn test_internalopen_1() -> io::Result<()> {
+    //     let f = internal_open("/tmp/test1", O_CREAT);
+    //     (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
+    //     Ok(())
+    // }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use std::io;
+    use std::env::VarError::NotPresent;
+    use std::ffi::{CString};
+    use libc::{opendir, dirfd};
+    use super::*;
+
     #[test]
-    fn test_internalopen_1() -> io::Result<()> {
-        let f = internal_open("/tmp/test1", O_CREAT);
-        (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
+    // #[should_panic]
+    fn test_readconfig_doesnotexist() -> io::Result<()> {
+        #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Deserialize)]
+        struct Point {
+            x: i32,
+        }
+        debug(format_args!("current_dir: {}\n", std::env::current_dir().unwrap().to_string_lossy()));
+        let cpath = std::env::current_dir().unwrap().join("tests/config/libwisktrack.so");
+        debug(format_args!("current_dir: {}\n", cpath.to_string_lossy()));
+        let x: Result<Point,String> = read_config(cpath.to_str().unwrap(), "doesnotexist.ini");
+        match x {
+            Ok(v) => assert!(false),
+            Err(e) => assert!(e.starts_with("Error finding No such file or directory (os error 2) path:"), e),
+        }
+        Ok(())
+    }
+
+
+    #[test]
+    fn test_readconfig_good() -> io::Result<()> {
+        #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Deserialize)]
+        struct Point {
+            x: i32,
+            #[serde(default)]
+            dx: i32,
+            v: Vec<String>,
+            #[serde(default)]
+            dv: Vec<String>,
+            h: BTreeMap<String,i32>,
+            #[serde(default)]
+            dh: BTreeMap<String,i32>,
+        }
+        debug(format_args!("current_dir: {}\n", std::env::current_dir().unwrap().to_string_lossy()));
+        let cpath = std::env::current_dir().unwrap().join("tests/config/libwisktrack.so");
+        debug(format_args!("current_dir: {}\n", cpath.to_string_lossy()));
+        let x: Result<Point,String> = read_config(cpath.to_str().unwrap(), "testgood.ini");
+        assert_eq!(x, Ok(Point {
+            x:2, dx:0,
+            v: vec!["some 1".to_owned(), "some 2".to_owned(), "some 3".to_owned()],
+            dv: vec![],
+            h: [("Key 1".to_owned(), 100),("Key 2".to_owned(), 50),("Key 3".to_owned(), 10)].iter().cloned().collect(),
+            dh: [].iter().cloned().collect(),
+        }));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_readconfig_badvalues() -> io::Result<()> {
+        #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Deserialize)]
+        struct Point {
+            x: i32,
+            y: i32,
+        }
+        debug(format_args!("current_dir: {}\n", std::env::current_dir().unwrap().to_string_lossy()));
+        let cpath = std::env::current_dir().unwrap().join("tests/config/libwisktrack.so");
+        debug(format_args!("current_dir: {}\n", cpath.to_string_lossy()));
+        let x: Result<Point,String> = read_config(cpath.to_str().unwrap(), "testbadvalues.ini");
+        match x {
+            Ok(v) => assert!(false),
+            Err(e) => assert!(e.starts_with(
+                "Error parsing x: invalid type: floating point `1`, expected i32 at line 2 column 4 path:"), e),
+        }
+
         Ok(())
     }
 }
