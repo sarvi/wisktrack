@@ -86,6 +86,7 @@ pub struct Config {
 
 const CONFIG_DEFAULTS: &str = "
 ---
+x: 1
 ";
 
 const TRACKERFD: c_int = 800;
@@ -140,7 +141,7 @@ lazy_static! {
         match rv {
             Ok(config) => { config }
             Err(e) => {
-                eprintln!("{}", e);
+                // eprintln!("{}", e);
                 let rv : Result<Config, serde_yaml::Error> = serde_yaml::from_str(CONFIG_DEFAULTS);
                 match rv {
                     Ok(config) =>  config,
