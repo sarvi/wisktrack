@@ -24,18 +24,19 @@ mod utils;
 
 use std::{env, ptr};
 // use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER, DEBUGMODE};
-use tracker::{WISKMAP, TRACKER, DEBUGMODE, CMDLINE, UUID};
 use std::ffi::CStr;
 use core::cell::Cell;
 use ctor::{ctor, dtor};
 use paste::paste;
 use tracing::{Level, event, };
 use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open};
+use nix::unistd::dup2;
 use tracing::dispatcher::with_default;
-use utils::WISKFD;
 use redhook::{debug, initialized};
 use backtrace::Backtrace;
 use std::io::{Error, Read, Result, Write};
+use utils::WISKFD;
+use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE, UUID};
 
 
 hook! {
@@ -104,16 +105,30 @@ dhook! {
 dhook! {
     unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open64, true) {
         if !initialized() {
+            let tempfd: c_int;
+
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
                 // debug(format_args!("open64({}, {:X}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags, mode));
                 event!(Level::INFO, "open64({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-                real!(open64)(pathname, flags, mode)
+                tempfd = real!(open64)(pathname, flags, mode)
             } else {
                 // debug(format_args!("open64({}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags));
                 event!(Level::INFO, "open64({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
-                real!(open64)(pathname, flags)
+                tempfd = real!(open64)(pathname, flags);
+            }
+            if tempfd >= 0 {
+                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+                WISK_FDS.lock().unwrap().push(fd);
+                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+                fd
+            } else {
+                tempfd
             }
         } else {
             setdebugmode!("open64");
@@ -144,7 +159,8 @@ hook! {
         // from a signal handler closing files and cleaning up a exited/forked process, while
         // the main thread is also in malloc.
         // setdebugmode!("close");
-        if fd != TRACKER.fd {
+        if ! WISK_FDS.lock().unwrap().iter().any(|&i| i==fd) {
+        // if fd != TRACKER.fd {
             // debug(format_args!("close({})\n", fd));
             event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
             // TRACKER.reportclose(fd);

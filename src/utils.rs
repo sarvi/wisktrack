@@ -208,7 +208,11 @@ where
     let cfgpath = Path::new(&cfgpath).join("config").join(conf).canonicalize().map_err(
         |e| format!("Error finding {} path: {:?}", e.to_string(), cfgpath)
     )?;
-    let content = read_to_string(cfgpath.to_owned()).map_err(
+    let mut file = File::open(cfgpath.to_owned()).map_err(
+        |e| format!("Error opening {} path: {:?}", e.to_string(), cfgpath)
+    )?;
+    let mut content = String::new();
+    let size = file.read_to_string(&mut content).map_err(
         |e| format!("Error reading {} path: {:?}", e.to_string(), cfgpath)
     )?;
     serde_yaml::from_str(content.as_str()).map_err(

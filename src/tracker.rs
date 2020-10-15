@@ -1,5 +1,6 @@
 
 use std::mem;
+use std::sync::Mutex;
 use std::{env, ptr};
 use std::ffi::{CStr, OsString};
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd};
@@ -89,7 +90,7 @@ const CONFIG_DEFAULTS: &str = "
 x: 1
 ";
 
-const TRACKERFD: c_int = 800;
+pub const TRACKERFD: c_int = 800;
 
 const SENDLIMIT: usize = 4094;
 // const SENDLIMIT: usize = 100;
@@ -105,6 +106,8 @@ pub struct Tracker {
 
 
 lazy_static! {
+    pub static ref WISK_FDS: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
+
     pub static ref LD_PRELOAD:String = {
         match env::var("LD_PRELOAD") {
             Ok(uuid) => uuid,
@@ -347,12 +350,15 @@ impl Tracker {
     pub fn new() -> Tracker {
         // debug(format_args!("Tracker Initializer\n"));
         if let Ok(f) = fs::OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
-            let tempfd = f.into_raw_fd();
-            let fd = dup2(tempfd, TRACKERFD).unwrap();
+            // let tempfd = f.into_raw_fd();
+            // let fd = dup2(tempfd, TRACKERFD).unwrap();
+            let fd = f.as_raw_fd();
             let tracker = Tracker {
-                file :  unsafe { FromRawFd::from_raw_fd(fd) },
+                file :  f,
+                // file :  unsafe { FromRawFd::from_raw_fd(fd) },
                 fd : fd,
             };
+            // debug(format_args!("Tracker Initializer: {}\n",tracker.fd));
             // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
             // debug(format_args!("Tracker File: {:?}\n", tracker.file));
             // debug(format_args!("Tracker Initializer: Done\n"));
