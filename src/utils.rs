@@ -16,6 +16,7 @@ use nix::unistd::dup3;
 use tracing::{Level, event};
 use redhook::debug;
 use serde::de;
+use regex::{RegexSet};
 
 pub static WISKFD: AtomicUsize = AtomicUsize::new(800);
 
@@ -25,6 +26,23 @@ pub fn vcstr2vecptr(vcstr: &Vec<CString>) -> Vec<*const c_char> {
                               .collect();
     vecptr
 }
+
+pub fn cpptr2vecptr(vecptr: *const *const libc::c_char) -> Vec<*const c_char> {
+    let mut vcstr: Vec<*const c_char> = vec!();
+    for i in 0 .. {
+        unsafe {
+            let argptr: *const c_char = *(vecptr.offset(i));
+            if argptr != ptr::null() {
+                vcstr.push(argptr);
+            } else {
+                vcstr.push(argptr);
+                break;
+            }
+        }
+    }
+    vcstr
+}
+
 
 pub fn cpptr2vcstr(vecptr: *const *const libc::c_char) -> Vec<CString> {
     let mut vcstr: Vec<CString> = vec!();
@@ -52,6 +70,8 @@ pub fn cpptr2str(vecptr: *const *const libc::c_char, sep: &str) -> String {
                     }
                     str.push_str(CStr::from_ptr(argptr).to_str().unwrap());
             } else {
+                str.push_str(sep);
+                str.push_str("NULL");
                 break;
             }
         }

@@ -75,6 +75,9 @@ int main(int argc, char *argv[])
     } else if (strcmp(argv[1], "execvp") == 0) {
         char *eargv[] = {"ls", "-l", "/usr/bin/ls", NULL};
         execvp("ls", eargv);
+    } else if (strcmp(argv[1], "execvp_pwd") == 0) {
+        char *eargv[] = {"/bin/pwd", NULL};
+        execvp("/bin/pwd", eargv);
     } else if (strcmp(argv[1], "execvpe") == 0) {
         char *eargv[] = {"ls", "-l", "/usr/bin/ls", NULL};
         char *env[] = {"PATH=/nothing:", NULL};
@@ -87,6 +90,8 @@ int main(int argc, char *argv[])
         execl("/bin/ls", "ls", "-l", "/usr/bin/ls", NULL);
     } else if (strcmp(argv[1], "execlp") == 0) {
         execlp("ls", "ls", "-l", "/usr/bin/ls", NULL);
+    } else if (strcmp(argv[1], "execlpscript") == 0) {
+        execlp("wit", "wit", "--verson", NULL);
     } else if (strcmp(argv[1], "execle") == 0) {
         char *env[] = {"PATH=/nothing:", NULL};
         execle("/bin/ls", "ls", "-l", "/usr/bin/ls", NULL, env);

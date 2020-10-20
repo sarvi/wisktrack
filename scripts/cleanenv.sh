@@ -59,8 +59,10 @@ WISK_TRACK=`pwd`/wisktrack.file
 # WISK_TRACK=wisktrack.file
 LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
 STRACEDIR="strace/"
+
 echo "LD_PRELOAD: $LD_PRELOAD"
 echo "WISK_TRACK: $WISK_TRACK"
+echo "PATH: $PATH"
 
 rm -rf $STRACEDIR ; mkdir $STRACEDIR
 rm -f $WISK_TRACE

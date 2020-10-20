@@ -40,6 +40,7 @@ backtrace = "0.3.50"
 nix = "0.18.0"
 string_template = "0.2.1"
 regex = "1"
+errno = "0.2.6"
 
 # [profile.dev]
 # Optimize by default so we don't need to remember to always pass in --release

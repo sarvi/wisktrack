@@ -18,23 +18,26 @@ extern crate tracing_subscriber;
 extern crate backtrace;
 extern crate string_template;
 extern crate regex;
+extern crate errno;
 
 mod tracker;
 mod utils;
 
 use std::{env, ptr};
 // use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER, DEBUGMODE};
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use core::cell::Cell;
 use ctor::{ctor, dtor};
 use paste::paste;
 use tracing::{Level, event, };
-use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open};
+use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open, INT_MAX};
 use nix::unistd::dup2;
+use nix::unistd::PathconfVar;
 use tracing::dispatcher::with_default;
 use redhook::{debug, initialized};
 use backtrace::Backtrace;
 use std::io::{Error, Read, Result, Write};
+use errno::{Errno, errno, set_errno};
 use utils::WISKFD;
 use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE, UUID};
 
@@ -196,6 +199,79 @@ typedef int (*__libc_fcntl)(int fd, int cmd, ...);
 
  */
 
+
+
+fn execvpe_common (
+    file: *const libc::c_char, argv: *const *const libc::c_char,
+    env: Vec<*const c_char>) -> c_int {
+    let mut e = errno();
+    let cwd = env::current_dir().unwrap();
+    let file = unsafe {
+        assert!(!file.is_null());
+        CStr::from_ptr(file) 
+    };
+    let file_bytes = file.to_bytes();
+    /* We check the simple case first. */
+    if (file_bytes.len() == 0) {
+        e.0 = libc::ENOENT;
+        set_errno(e);
+        return -1;
+    }
+    let argv = utils::cpptr2vecptr(argv);
+     /* Don't search when it contains a slash.  */
+    if ( file_bytes.iter().any(|i| *i as char == '/'))  { //. strchr (file, '/') != NULL)
+        let rv = unsafe { real!(execve)(file.as_ptr(), argv.as_ptr(), env.as_ptr()) };
+        return rv;
+    }
+
+    let path = match env::var("PATH") {
+        Ok(path) => path,
+        Err(_) => "/bin:/usr/bin".to_owned(),
+    };
+
+    let mut got_eacces: bool = false;
+    /* The resulting string maximum size would be potentially a entry
+       in PATH plus '/' (path_len + 1) and then the the resulting file name
+       plus '\0' (file_len since it already accounts for the '\0').  */
+    for p in path.split(":") {
+        let mut p = p.to_owned();
+        p.push_str("/");
+        p.push_str(file.to_str().unwrap());
+        let buffer = CString::new(p.as_str()).expect("Trouble Mapping executable String to CString");
+        let rv = unsafe { real!(execve)(buffer.as_ptr(), argv.as_ptr(), env.as_ptr()) };
+        match errno().0 {
+            libc::EACCES => {
+                /* Record that we got a 'Permission denied' error.  If we end
+                up finding no executable we can use, we want to diagnose
+                that we did find one but were denied access.  */
+                got_eacces = true;                
+            },
+            libc::ENOENT | libc::ESTALE | libc::ENOTDIR => { },
+                /* Those errors indicate the file is missing or not executable
+                by us, in which case we want to just try the next path
+                directory.  */
+            libc::ENODEV | libc::ETIMEDOUT => { },
+                /* Some strange filesystems like AFS return even
+                stranger error numbers.  They cannot reasonably mean
+                anything else so ignore those, too.  */
+            _ => {
+                /* Some other error means we found an executable file, but
+                    something went wrong executing it; return the error to our
+                    caller.  */
+                return -1;
+            }
+        }
+    }
+    /* We tried every element and none of them worked.  */
+    if (got_eacces)  {
+        /* At least one failure was due to permissions, so report that
+           error.  */
+        e.0 = libc::EACCES;
+        set_errno(e);
+    }
+    return -1;
+   }
+
 // typedef int (*__libc_execl)(const char *path, char *const arg, ...);
 
  dhook! {
@@ -256,7 +332,9 @@ dhook! {
         event!(Level::INFO,"execlp: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
-        real!(execvpe)(file, argv, envp.as_ptr())
+
+        // real!(execvpe)(file, argv, envp.as_ptr())
+        execvpe_common(file, argv, envp)
     }
 }
 
@@ -320,8 +398,8 @@ dhook! {
 hook! {
     unsafe fn execvp(file: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => (my_execvp,-1,true) {
         setdebugmode!("execvp");
-        // debug(format_args!("execvp({}, {}, {})\n", std::process::id(), CStr::from_ptr(file).to_string_lossy(),utils::cpptr2str(argv, " ")));
-        event!(Level::INFO, "execvp({}, {}, \"{}\"F)", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
+        // debug(format_args!("execvp({}, {}, {})\n", std::process::id(), CStr::from_ptr(file).to_string_lossy(),utils::cpptr2str(argv, ",")));
+        event!(Level::INFO, "execvp({}, {}, \"{}\"F)", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, ","));
         TRACKER.reportexecvp(file, argv);
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
@@ -331,8 +409,7 @@ hook! {
         event!(Level::INFO,"execvp: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
-        real!(execvpe)(file, argv, envp.as_ptr())
-        // real!(execvp)(file, argv)
+        execvpe_common(file, argv, envp)
     }
 }
 
@@ -353,8 +430,9 @@ hook! {
         // event!(Level::INFO,"execvpe: {}: Updated Env {:?}", TRACKER.uuid, env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
-        real!(execvpe)(file, argv, envp.as_ptr())
+        // real!(execvpe)(file, argv, envp.as_ptr())
         // real!(execvpe)(file, argv, envp)
+        execvpe_common(file, argv, envp)
     }
 }
 
