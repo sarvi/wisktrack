@@ -142,7 +142,7 @@ pub fn assert_ld_preload(envp: &Vec<*const c_char>, bit64: bool) {
             if x.starts_with("LD_PRELOAD=") {
                 found=true;
                 if bit64 {
-                    assert!(x.contains("lib/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
+                    assert!(x.contains("lib64/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
                 } else {
                     assert!(x.contains("${LIB}/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
                 }

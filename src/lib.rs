@@ -214,7 +214,7 @@ fn execvpe_common (
     let ld_preload_64bit = CString::new(
                                envcstr[0].as_c_str().to_str().unwrap()
                                          .replace("${LIB}/libwisktrack.so",
-                                                  "lib/libwisktrack.so")).unwrap();
+                                                  "lib64/libwisktrack.so")).unwrap();
 
     let cwdstr= cwd.to_str().unwrap();
     let file = unsafe {
