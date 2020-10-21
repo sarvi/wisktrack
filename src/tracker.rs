@@ -72,7 +72,7 @@ pub struct Config {
     // #[serde(default)]
     // bit64: BTreeMap<String, String>,
     #[serde(default)]
-    app64bit_patterns: Vec<String>,
+    app64bitonly_patterns: Vec<String>,
 }
 
 // impl Default for Config {
@@ -110,7 +110,20 @@ lazy_static! {
 
     pub static ref LD_PRELOAD:String = {
         match env::var("LD_PRELOAD") {
-            Ok(uuid) => uuid,
+            Ok(ld_preload) => {
+                let updated_ld_preload = ld_preload.replace("lib/libwisktrack.so",
+                                                            "${LIB}/libwisktrack.so")
+                                                   .replace("lib32/libwisktrack.so",
+                                                            "${LIB}/libwisktrack.so")
+                                                   .replace("lib64/libwisktrack.so",
+                                                            "${LIB}/libwisktrack.so");
+                if ld_preload != updated_ld_preload {
+                    // eprintln!("before updating: {}", ld_preload);
+                    env::set_var("LD_PRELOAD", updated_ld_preload.as_str());
+                    // eprintln!("after updating: {}", env::var("LD_PRELOAD").unwrap());
+                }
+                updated_ld_preload
+            },
             Err(_) => panic!(),
         }
     };
@@ -126,6 +139,8 @@ lazy_static! {
         let rv = match env::var("WISK_WSROOT") {
             Ok(mut wsroot) => {
                 if wsroot.is_empty() {
+                    eprintln!("WISK_WSROOT MUST be set to point to the root of the build workspace. Curret Value: {}", wsroot);
+                    panic!();
                     wsroot.push_str(CWD.as_str());
                 }
                 if !Path::new(&wsroot).exists() {
@@ -133,7 +148,12 @@ lazy_static! {
                 }
                 wsroot
             },
-            Err(_) => CWD.to_owned(),
+            Err(_) => {
+                eprintln!("WISK_WSROOT MUST be set point to the root of the build workspace");
+                panic!();
+                let wsroot = CWD.to_owned();
+                wsroot
+            },
         };
         // debug(format_args!("WSROOT: {}\n", rv.as_str()));
         rv
@@ -144,7 +164,8 @@ lazy_static! {
         match rv {
             Ok(config) => { config }
             Err(e) => {
-                // eprintln!("{}", e);
+                eprintln!("Cannnot find wisktrack.ini under project. Reading Default.\nError: {}", e);
+                panic!();
                 let rv : Result<Config, serde_yaml::Error> = serde_yaml::from_str(CONFIG_DEFAULTS);
                 match rv {
                     Ok(config) =>  config,
@@ -254,11 +275,11 @@ lazy_static! {
         templmap
     };
 
-    pub static ref  APP64BIT_PATTERNS: RegexSet = {
-        let p: Vec<String> = CONFIG.app64bit_patterns.iter().map(|v| render(v,&TEMPLATEMAP)).collect();
+    pub static ref  APP64BITONLY_PATTERNS: RegexSet = {
+        let p: Vec<String> = CONFIG.app64bitonly_patterns.iter().map(|v| render(v,&TEMPLATEMAP)).collect();
         // eprintln!("p: {:?}", p);
         let x = RegexSet::new(&p).unwrap_or_else(|e| {
-            eprintln!("Error compiling list of regex in app_64bit_match: {:?}", e);
+            eprintln!("Error compiling list of regex in app_64bitonly_match: {:?}", e);
             panic!()
         });
         x
@@ -281,7 +302,7 @@ pub fn initialize_statics() {
     lazy_static::initialize(&TRACKER);
     lazy_static::initialize(&MAPFIELDS);
     lazy_static::initialize(&TEMPLATEMAP);
-    lazy_static::initialize(&APP64BIT_PATTERNS);
+    lazy_static::initialize(&APP64BITONLY_PATTERNS);
 }
 
 pub fn render(field: &str, vals: &HashMap<&str, &str>) -> String {

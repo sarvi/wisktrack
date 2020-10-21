@@ -97,10 +97,17 @@ pub fn cpptr2hashmap(vecptr: *const *const libc::c_char) -> HashMap<String,Strin
     hash
 }
 
-pub fn hashmap2vcstr(hash: &HashMap<String,String>) -> Vec<CString> {
-    let x:Vec<CString> = hash.iter()
-                             .map(|(k,v)| CString::new(format!("{}={}",k,v)).unwrap())
-                             .collect();
+pub fn hashmap2vcstr(hash: &HashMap<String,String>, order: Vec<&str>) -> Vec<CString> {
+    let mut x:Vec<CString> = order.iter()
+                              .map(|k| CString::new(format!("{}={}",k,hash[k.to_owned()]))
+                                                .unwrap())
+                              .collect();
+    let mut remain:Vec<CString> = hash.into_iter()
+                     .filter(|(k, v)| !order.iter().any(|i| k==i))
+                     .map(|(k, v)| CString::new(format!("{}={}",k,v)).unwrap())
+                     .collect();
+    x.append(&mut remain);
+    // eprintln!("VCSTR: {:#?}", x);
     x
 }
 
@@ -122,6 +129,28 @@ pub fn hashmapassert(hash: &HashMap<String,String>, mut values: Vec<&str>) -> bo
     //     event!(Level::INFO, "hashassert(no-match):");
     // }
     (values.len() == 0)
+}
+
+pub fn assert_ld_preload(envp: &Vec<*const c_char>, bit64: bool) {
+    let mut found=false;
+    for i in envp.iter().enumerate() {
+        if envp[i.0].is_null() {
+            continue
+        }
+        unsafe {
+            let x = CStr::from_ptr(envp[i.0]).to_str().unwrap();
+            if x.starts_with("LD_PRELOAD=") {
+                found=true;
+                if bit64 {
+                    assert!(x.contains("lib/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
+                } else {
+                    assert!(x.contains("${LIB}/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
+                }
+                assert!(x.contains("LD_PRELOAD="), "Does not have LD_PRELOAD. Set to {}",x);
+                assert_eq!(i.0,0, "LD_PRELOAD in other places");
+            }
+        }
+    }
 }
 
 pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>) {
@@ -172,6 +201,9 @@ pub fn currentenvupdate(fields: &Vec<(String,String)>) {
 pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
     let mut wiskmap: Vec<(String,String)> = vec!();
     use std::env::VarError::NotPresent;
+    assert!(env::var_os("LD_PRELOAD").unwrap().to_str().unwrap().contains("${LIB}/libwisktrack.so"),
+            "Initialization LD_PRELOAD is wrong. Set to {}",
+            env::var_os("LD_PRELOAD").unwrap().to_str().unwrap());
     for k in fields.iter() {
         if let Some(eval) = env::var_os(k) {
             wiskmap.push(((*k).to_owned(), eval.into_string().unwrap()));

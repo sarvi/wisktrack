@@ -22,6 +22,7 @@ extern crate errno;
 
 mod tracker;
 mod utils;
+mod path;
 
 use std::{env, ptr};
 // use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER, DEBUGMODE};
@@ -39,7 +40,8 @@ use backtrace::Backtrace;
 use std::io::{Error, Read, Result, Write};
 use errno::{Errno, errno, set_errno};
 use utils::WISKFD;
-use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE, UUID};
+use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE, UUID,
+              APP64BITONLY_PATTERNS};
 
 
 hook! {
@@ -203,9 +205,18 @@ typedef int (*__libc_fcntl)(int fd, int cmd, ...);
 
 fn execvpe_common (
     file: *const libc::c_char, argv: *const *const libc::c_char,
-    env: Vec<*const c_char>) -> c_int {
+    envcstr: Vec<CString>, search: bool) -> c_int {
+    let mut envp = utils::vcstr2vecptr(&envcstr);
+    envp.push(std::ptr::null());
     let mut e = errno();
     let cwd = env::current_dir().unwrap();
+    let ld_preload = envcstr[0].as_c_str().to_owned();
+    let ld_preload_64bit = CString::new(
+                               envcstr[0].as_c_str().to_str().unwrap()
+                                         .replace("${LIB}/libwisktrack.so",
+                                                  "lib/libwisktrack.so")).unwrap();
+
+    let cwdstr= cwd.to_str().unwrap();
     let file = unsafe {
         assert!(!file.is_null());
         CStr::from_ptr(file) 
@@ -217,10 +228,20 @@ fn execvpe_common (
         set_errno(e);
         return -1;
     }
+    let argvold = argv;
     let argv = utils::cpptr2vecptr(argv);
      /* Don't search when it contains a slash.  */
-    if ( file_bytes.iter().any(|i| *i as char == '/'))  { //. strchr (file, '/') != NULL)
-        let rv = unsafe { real!(execve)(file.as_ptr(), argv.as_ptr(), env.as_ptr()) };
+    if ( !search || file_bytes.iter().any(|i| *i as char == '/'))  { //. strchr (file, '/') != NULL)
+        if path::is_match(file.to_str().unwrap(), &APP64BITONLY_PATTERNS, &cwdstr) {
+            envp[0] = ld_preload_64bit.as_ptr();
+            // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+            // TRACKER.report("APP64ONLY", &utils::cpptr2str(argvold, " "));
+            utils::assert_ld_preload(&envp, true);
+        } else {
+            envp[0] = ld_preload.as_ptr();
+            // TRACKER.report("DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+            utils::assert_ld_preload(&envp, false);        }
+        let rv = unsafe { real!(execve)(file.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
         return rv;
     }
 
@@ -238,7 +259,18 @@ fn execvpe_common (
         p.push_str("/");
         p.push_str(file.to_str().unwrap());
         let buffer = CString::new(p.as_str()).expect("Trouble Mapping executable String to CString");
-        let rv = unsafe { real!(execve)(buffer.as_ptr(), argv.as_ptr(), env.as_ptr()) };
+        if path::is_match(buffer.to_str().unwrap(), &APP64BITONLY_PATTERNS, &cwdstr) {
+            envp[0] = ld_preload_64bit.as_ptr();
+            // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+            // TRACKER.report("DEBUGDATA_64ONLY", &utils::cpptr2str(argvold, " "));
+            utils::assert_ld_preload(&envp, true);
+            // panic!();
+        } else {
+            envp[0] = ld_preload.as_ptr();
+            // TRACKER.report("DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+            utils::assert_ld_preload(&envp, false);
+        }
+        let rv = unsafe { real!(execve)(buffer.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
         match errno().0 {
             libc::EACCES => {
                 /* Record that we got a 'Permission denied' error.  If we end
@@ -295,13 +327,11 @@ fn execvpe_common (
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         // debug(format_args!("execv(): {:?}\n", env));
         event!(Level::INFO,"execl: {}: Updated Env {:?}", &UUID.as_str(), env);
-        let mut envp = utils::vcstr2vecptr(&envcstr);
-        envp.push(std::ptr::null());
 
-        real!(execve)(path, argv, envp.as_ptr())
+        execvpe_common(path, argv, envcstr, false)
     }
 }
 
@@ -327,14 +357,11 @@ dhook! {
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         // debug(format_args!("execv=lp(): {:?}\n", env));
         event!(Level::INFO,"execlp: {}: Updated Env {:?}", &UUID.as_str(), env);
-        let mut envp = utils::vcstr2vecptr(&envcstr);
-        envp.push(std::ptr::null());
 
-        // real!(execvpe)(file, argv, envp.as_ptr())
-        execvpe_common(file, argv, envp)
+        execvpe_common(file, argv, envcstr, true)
     }
 }
 
@@ -359,15 +386,14 @@ dhook! {
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         // debug(format_args!("execle(): {:?}\n", env));
         // event!(Level::INFO,"execle: {}: Updated Env {:?}", TRACKER.uuid, env);
-        let mut envp = utils::vcstr2vecptr(&envcstr);
-        envp.push(std::ptr::null());
 
         event!(Level::INFO, "execle({}, {}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
         TRACKER.reportexecv(path, argv);
-        real!(execve)(path, argv, envp.as_ptr())
+
+        execvpe_common(path, argv, envcstr, false)
     }
 }
 
@@ -383,13 +409,11 @@ dhook! {
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         // debug(format_args!("execv(): {:?}\n", env));
         event!(Level::INFO,"execv: {}: Updated Env {:?}", &UUID.as_str(), env);
-        let mut envp = utils::vcstr2vecptr(&envcstr);
-        envp.push(std::ptr::null());
-        real!(execve)(path, argv, envp.as_ptr())
-        // real!(execv)(path, argv)
+
+        execvpe_common(path, argv, envcstr, false)
     }
 }
 
@@ -404,12 +428,11 @@ hook! {
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         // debug(format_args!("execvp: Updated Env {:?}", env));
         event!(Level::INFO,"execvp: {}: Updated Env {:?}", &UUID.as_str(), env);
-        let mut envp = utils::vcstr2vecptr(&envcstr);
-        envp.push(std::ptr::null());
-        execvpe_common(file, argv, envp)
+
+        execvpe_common(file, argv, envcstr, true)
     }
 }
 
@@ -425,14 +448,11 @@ hook! {
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         // debug(format_args!("execvpe(): {:?}\n", env));
         // event!(Level::INFO,"execvpe: {}: Updated Env {:?}", TRACKER.uuid, env);
-        let mut envp = utils::vcstr2vecptr(&envcstr);
-        envp.push(std::ptr::null());
-        // real!(execvpe)(file, argv, envp.as_ptr())
-        // real!(execvpe)(file, argv, envp)
-        execvpe_common(file, argv, envp)
+
+        execvpe_common(file, argv, envcstr, true)
     }
 }
 
@@ -449,13 +469,11 @@ hook! {
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         // debug(format_args!("execve(): {:?}\n", env));
         event!(Level::INFO,"execve: {}: Updated Env {:?}", &UUID.as_str(), env);
-        let mut envp = utils::vcstr2vecptr(&envcstr);
-        envp.push(std::ptr::null());
-        real!(execve)(pathname, argv, envp.as_ptr())
-        // real!(execve)(pathname, argv, envp)
+
+        execvpe_common(pathname, argv, envcstr, false)
     }
 }
 
@@ -472,7 +490,7 @@ hook! {
 //         let mut env = utils::cpptr2hashmap(envp);
 //         utils::envupdate(&mut env,&TRACKER.wiskfields);
 //         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-//         let envcstr = utils::hashmap2vcstr(&env);
+//         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
 //         // event!(Level::INFO,"execveat: {}: Updated Env {:?}", TRACKER.uuid, env);
 //         let mut envp = utils::vcstr2vecptr(&envcstr);
 //         envp.push(std::ptr::null());
@@ -494,7 +512,7 @@ hook! {
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         event!(Level::INFO,"posix_spawn: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
@@ -516,7 +534,7 @@ hook! {
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
-        let envcstr = utils::hashmap2vcstr(&env);
+        let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         event!(Level::INFO,"posix_spawnp: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());

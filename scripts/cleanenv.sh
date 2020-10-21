@@ -10,6 +10,7 @@ LIBRARY_PATH_BASE=$(realpath $SCRIPT_DIR/../)
 # echo "SCRIPT_DIR: $SCRIPT_DIR"
 # echo "LIBRARY_PATH_BASE: $LIBRARY_PATH_BASE"
 
+WISK_WSROOT="$WORKSPACE_DIR"
 DOSTRACE=
 LD_DEBUG=
 while true
@@ -58,8 +59,10 @@ WISK_TRACK=`pwd`/wisktrack.file
 # WISK_TRACK=`pwd`/wisktrack
 # WISK_TRACK=wisktrack.file
 LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
+# LD_PRELOAD="$LIBRARY_PATH_BASE/lib64/libwisktrack.so"
 STRACEDIR="strace/"
 
+echo "WISK_WSROOT: $WISK_WSROOT"
 echo "LD_PRELOAD: $LD_PRELOAD"
 echo "WISK_TRACK: $WISK_TRACK"
 echo "PATH: $PATH"
@@ -67,10 +70,16 @@ echo "PATH: $PATH"
 rm -rf $STRACEDIR ; mkdir $STRACEDIR
 rm -f $WISK_TRACE
 rm -rf $WISK_TRACK
+
+if [[ ! -f "$WISK_WSROOT/wisk/config/wisktrack.ini" ]]; then
+   echo "Wisk Track Config not found at $WISK_WSROOT/wisk/config/wisktrack.ini"
+   mkdir -p "$WISK_WSROOT/wisk/config"
+   exit 1
+fi
 echo "Starting....."
 
 if [[ -z $DOSTRACE ]]; then
-time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" "$@"
+time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" "$@"
 else
-time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" "$@"
+time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" "$@"
 fi
