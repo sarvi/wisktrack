@@ -21,6 +21,7 @@ extern crate regex;
 extern crate errno;
 
 mod tracker;
+#[macro_use]
 mod utils;
 mod path;
 
@@ -39,8 +40,8 @@ use redhook::{debug, initialized};
 use backtrace::Backtrace;
 use std::io::{Error, Read, Result, Write};
 use errno::{Errno, errno, set_errno};
-use utils::WISKFD;
-use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE, UUID,
+use utils::{ WISKFD, PUUID, UUID};
+use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE,
               APP64BITONLY_PATTERNS};
 
 
@@ -210,9 +211,12 @@ fn execvpe_common (
     envp.push(std::ptr::null());
     let mut e = errno();
     let cwd = env::current_dir().unwrap();
-    let ld_preload = envcstr[0].as_c_str().to_owned();
+    let ld_preload = CString::new(
+                         envcstr[0].as_c_str().to_str().unwrap()
+                                   .replace("lib64/libwisktrack.so",
+                                            "${LIB}/libwisktrack.so")).unwrap();
     let ld_preload_64bit = CString::new(
-                               envcstr[0].as_c_str().to_str().unwrap()
+                               ld_preload.to_str().unwrap()
                                          .replace("${LIB}/libwisktrack.so",
                                                   "lib64/libwisktrack.so")).unwrap();
 
@@ -240,7 +244,9 @@ fn execvpe_common (
         } else {
             envp[0] = ld_preload.as_ptr();
             // TRACKER.report("DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
-            utils::assert_ld_preload(&envp, false);        }
+            utils::assert_ld_preload(&envp, false);
+        }
+        utils::assert_execenv(&envp, &PUUID);
         let rv = unsafe { real!(execve)(file.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
         return rv;
     }
@@ -270,6 +276,7 @@ fn execvpe_common (
             // TRACKER.report("DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
             utils::assert_ld_preload(&envp, false);
         }
+        utils::assert_execenv(&envp, &PUUID);
         let rv = unsafe { real!(execve)(buffer.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
         match errno().0 {
             libc::EACCES => {
@@ -323,7 +330,6 @@ fn execvpe_common (
         let argv = vecptrs.as_ptr();
 
         event!(Level::INFO, "execl({}, {}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
-        TRACKER.reportexecv(path, argv);
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -331,6 +337,7 @@ fn execvpe_common (
         // debug(format_args!("execv(): {:?}\n", env));
         event!(Level::INFO,"execl: {}: Updated Env {:?}", &UUID.as_str(), env);
 
+        TRACKER.reportexecvpe("execl", path, argv, &envcstr);
         execvpe_common(path, argv, envcstr, false)
     }
 }
@@ -353,7 +360,6 @@ dhook! {
         }
         let argv = vecptrs.as_ptr();
         event!(Level::INFO, "execlp({}, {}, {})", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
-        TRACKER.reportexecvp(file, argv);
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -361,6 +367,7 @@ dhook! {
         // debug(format_args!("execv=lp(): {:?}\n", env));
         event!(Level::INFO,"execlp: {}: Updated Env {:?}", &UUID.as_str(), env);
 
+        TRACKER.reportexecvpe("execlp", file, argv, &envcstr);
         execvpe_common(file, argv, envcstr, true)
     }
 }
@@ -391,8 +398,8 @@ dhook! {
         // event!(Level::INFO,"execle: {}: Updated Env {:?}", TRACKER.uuid, env);
 
         event!(Level::INFO, "execle({}, {}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
-        TRACKER.reportexecv(path, argv);
 
+        TRACKER.reportexecvpe("execle", path, argv, &envcstr);
         execvpe_common(path, argv, envcstr, false)
     }
 }
@@ -405,7 +412,6 @@ dhook! {
         setdebugmode!("execv");
         // debug(format_args!("execv({}, {})\n", CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "execv({}, {}, \"{}\"F)", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
-        TRACKER.reportexecv(path, argv);
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -413,6 +419,7 @@ dhook! {
         // debug(format_args!("execv(): {:?}\n", env));
         event!(Level::INFO,"execv: {}: Updated Env {:?}", &UUID.as_str(), env);
 
+        TRACKER.reportexecvpe("execv", path, argv, &envcstr);
         execvpe_common(path, argv, envcstr, false)
     }
 }
@@ -424,7 +431,6 @@ hook! {
         setdebugmode!("execvp");
         // debug(format_args!("execvp({}, {}, {})\n", std::process::id(), CStr::from_ptr(file).to_string_lossy(),utils::cpptr2str(argv, ",")));
         event!(Level::INFO, "execvp({}, {}, \"{}\"F)", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, ","));
-        TRACKER.reportexecvp(file, argv);
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -432,6 +438,7 @@ hook! {
         // debug(format_args!("execvp: Updated Env {:?}", env));
         event!(Level::INFO,"execvp: {}: Updated Env {:?}", &UUID.as_str(), env);
 
+        TRACKER.reportexecvpe("execvp", file, argv, &envcstr);
         execvpe_common(file, argv, envcstr, true)
     }
 }
@@ -444,7 +451,6 @@ hook! {
         setdebugmode!("execvpe");
         // debug(format_args!("execvpe({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "execvpe({}, {}, \"{}\")", UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
-        TRACKER.reportexecvpe(file, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -452,6 +458,7 @@ hook! {
         // debug(format_args!("execvpe(): {:?}\n", env));
         // event!(Level::INFO,"execvpe: {}: Updated Env {:?}", TRACKER.uuid, env);
 
+        TRACKER.reportexecvpe("execv", file, argv, &envcstr);
         execvpe_common(file, argv, envcstr, true)
     }
 }
@@ -465,7 +472,6 @@ hook! {
         setdebugmode!("execve");
         // debug(format_args!("execve({}, {})\n", CStr::from_ptr(pathname).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "execve({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(),utils::cpptr2str(argv, " "));
-        TRACKER.reportexecvpe(pathname, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -473,6 +479,7 @@ hook! {
         // debug(format_args!("execve(): {:?}\n", env));
         event!(Level::INFO,"execve: {}: Updated Env {:?}", &UUID.as_str(), env);
 
+        TRACKER.reportexecvpe("execve", pathname, argv, &envcstr);
         execvpe_common(pathname, argv, envcstr, false)
     }
 }
@@ -508,7 +515,6 @@ hook! {
         setdebugmode!("posix_spawn");
         // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "posix_spawnp({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
-        TRACKER.reportexecvpe(path, argv, envp);
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
@@ -516,6 +522,25 @@ hook! {
         event!(Level::INFO,"posix_spawn: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
+        let ld_preload = envcstr[0].as_c_str().to_owned();
+        let ld_preload_64bit = CString::new(
+                                   envcstr[0].as_c_str().to_str().unwrap()
+                                             .replace("${LIB}/libwisktrack.so",
+                                                      "lib64/libwisktrack.so")).unwrap();
+        let pathstr = unsafe { CStr::from_ptr(path) };
+        if path::is_match(pathstr.to_str().unwrap(), &APP64BITONLY_PATTERNS, "") {
+            envp[0] = ld_preload_64bit.as_ptr();
+            // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+            // TRACKER.report("APP64ONLY", &utils::cpptr2str(argvold, " "));
+            utils::assert_ld_preload(&envp, true);
+        } else {
+            envp[0] = ld_preload.as_ptr();
+            // TRACKER.report("DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+            utils::assert_ld_preload(&envp, false);
+        }
+        utils::assert_execenv(&envp, &PUUID);
+
+        TRACKER.reportexecvpe("posix_spawn", path, argv, &envcstr);
         real!(posix_spawn)(pid, path, file_actions, attrp, argv, envp.as_ptr())
     }
 }
@@ -529,7 +554,6 @@ hook! {
         setdebugmode!("posix_spawnp");
         // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
         event!(Level::INFO, "posix_spawnp({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
-        TRACKER.reportexecvpe(file, argv, envp);
 
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
@@ -538,6 +562,7 @@ hook! {
         event!(Level::INFO,"posix_spawnp: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
+        TRACKER.reportexecvpe("posix_spawnp", file, argv, &envcstr);
         real!(posix_spawnp)(pid, file, file_actions, attrp, argv, envp.as_ptr())
     }
 }
@@ -715,6 +740,7 @@ fn dlsym_intialize() {
 #[ctor]
 fn cfoo() {
     // debug(format_args!("Constructor: {}\n", std::process::id()));
+    // debug(format_args!("Incoming Environment: {:?}\n", env::vars_os().map(|(x,y)| x.to_str().unwrap().to_owned()).collect::<Vec<String>>()));
     dlsym_intialize();
     // assert_ne!(&TRACKER.pid, "");
     // MY_DISPATCH;

@@ -1,8 +1,9 @@
 
+
 use std::mem;
 use std::sync::Mutex;
 use std::{env, ptr};
-use std::ffi::{CStr, OsString};
+use std::ffi::{CStr, CString, OsString};
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd};
 // use std::sync::Mutex;
 use std::io::prelude::*;
@@ -15,7 +16,6 @@ use std::process;
 use std::collections::HashMap;
 use libc::{c_char,c_int, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open};
 use nix::unistd::dup2;
-use uuid::Uuid;
 // use serde::{Serialize, Deserialize};
 use base_62;
 use filepath::FilePath;
@@ -28,6 +28,8 @@ use backtrace::Backtrace;
 use string_template::Template;
 use regex::{RegexSet, escape};
 use crate::utils;
+use crate::errorexit;
+use utils::{PUUID, UUID, PID};
 
 pub const DEBUGMODE:bool = true;
 
@@ -108,9 +110,12 @@ pub struct Tracker {
 lazy_static! {
     pub static ref WISK_FDS: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
 
+    pub static ref ORIGINAL_ENV: HashMap<String,String> = env::vars().collect();
+
     pub static ref LD_PRELOAD:String = {
-        match env::var("LD_PRELOAD") {
-            Ok(ld_preload) => {
+        match ORIGINAL_ENV.get("LD_PRELOAD") {
+            Some(ld_preload) => {
+                let ld_preload = ld_preload.to_owned();
                 let updated_ld_preload = ld_preload.replace("lib/libwisktrack.so",
                                                             "${LIB}/libwisktrack.so")
                                                    .replace("lib32/libwisktrack.so",
@@ -122,9 +127,10 @@ lazy_static! {
                     env::set_var("LD_PRELOAD", updated_ld_preload.as_str());
                     // eprintln!("after updating: {}", env::var("LD_PRELOAD").unwrap());
                 }
+                // eprintln!("after updating: {}", env::var("LD_PRELOAD").unwrap());
                 updated_ld_preload
             },
-            Err(_) => panic!(),
+            None => errorexit!("Environmet variable LD_PRELOAD not found"),
         }
     };
 
@@ -136,11 +142,12 @@ lazy_static! {
     };
 
     pub static ref WSROOT : String = {
-        let rv = match env::var("WISK_WSROOT") {
-            Ok(mut wsroot) => {
+        let rv = match ORIGINAL_ENV.get("WISK_WSROOT") {
+            Some(wsroot) => {
+                let mut wsroot = wsroot.to_owned();
                 if wsroot.is_empty() {
-                    eprintln!("WISK_WSROOT MUST be set to point to the root of the build workspace. Curret Value: {}", wsroot);
-                    panic!();
+                    errorexit!("WISK_WSROOT is empty. MUST be set to point to the root of the build workspace. Curret Value: {}",
+                              wsroot);
                     wsroot.push_str(CWD.as_str());
                 }
                 if !Path::new(&wsroot).exists() {
@@ -148,9 +155,8 @@ lazy_static! {
                 }
                 wsroot
             },
-            Err(_) => {
-                eprintln!("WISK_WSROOT MUST be set point to the root of the build workspace");
-                panic!();
+            None => {
+                errorexit!("WISK_ERROR: WISK_WSROOT missig. MUST be set point to the root of the build workspace.");
                 let wsroot = CWD.to_owned();
                 wsroot
             },
@@ -164,30 +170,17 @@ lazy_static! {
         match rv {
             Ok(config) => { config }
             Err(e) => {
-                eprintln!("Cannnot find wisktrack.ini under project. Reading Default.\nError: {}", e);
-                panic!();
+                errorexit!("WISK_ERROR: Cannnot find wisktrack.ini under project. Reading Default.\nError: {}", e);
                 let rv : Result<Config, serde_yaml::Error> = serde_yaml::from_str(CONFIG_DEFAULTS);
                 match rv {
                     Ok(config) =>  config,
                     Err(e) => {
-                        eprintln!("{}", e);
-                        panic!()
+                        errorexit!("WISK_ERROR: {}", e);
                     }
                 }
             }
         }
     };
-
-    pub static ref PUUID:String = {
-        match env::var("WISK_PUUID") {
-            Ok(uuid) => uuid,
-            Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
-        }
-    };
-
-    pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
-
-    pub static ref PID : String = process::id().to_string();
 
     pub static ref WISKTRACK:String = {
         // debug(format_args!("Here\n"));        
@@ -279,8 +272,7 @@ lazy_static! {
         let p: Vec<String> = CONFIG.app64bitonly_patterns.iter().map(|v| render(v,&TEMPLATEMAP)).collect();
         // eprintln!("p: {:?}", p);
         let x = RegexSet::new(&p).unwrap_or_else(|e| {
-            eprintln!("Error compiling list of regex in app_64bitonly_match: {:?}", e);
-            panic!()
+            errorexit!("WISK_ERROR: Error compiling list of regex in app_64bitonly_match: {:?}", e);
         });
         x
     };
@@ -288,13 +280,14 @@ lazy_static! {
 }
 
 pub fn initialize_statics() {
+    lazy_static::initialize(&ORIGINAL_ENV);
+    lazy_static::initialize(&PUUID);
+    lazy_static::initialize(&PID);
     lazy_static::initialize(&LD_PRELOAD);
     lazy_static::initialize(&CWD);
     lazy_static::initialize(&WSROOT);
     lazy_static::initialize(&CONFIG);
-    lazy_static::initialize(&PUUID);
     lazy_static::initialize(&UUID);
-    lazy_static::initialize(&PID);
     lazy_static::initialize(&WISKTRACK);
     lazy_static::initialize(&WISKMAP);
     lazy_static::initialize(&ENV);
@@ -325,12 +318,8 @@ fn path2str (path: PathBuf) -> String {
     pathostr.into_string().unwrap()
 }
 
-unsafe fn cstr2str<'a>(ptr: *const c_char) -> &'a str {
-    CStr::from_ptr(ptr).to_str().unwrap()
-}
-
 unsafe fn pathget(ipath: *const libc::c_char) -> String {
-    String::from(cstr2str(ipath))
+    String::from(utils::ptr2str(ipath))
 }
 
 unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
@@ -385,8 +374,7 @@ impl Tracker {
             // debug(format_args!("Tracker Initializer: Done\n"));
             tracker
         } else {
-            debug(format_args!("Error opening track file: {}\n", WISKTRACK.as_str()));
-            std::panic!();
+            errorexit!("Error opening track file: {}\n", WISKTRACK.as_str());
         }
     }
 
@@ -469,12 +457,12 @@ impl Tracker {
     }
 
     pub unsafe fn reportsymlink(self: &Self, target: *const libc::c_char, linkpath: *const libc::c_char) {
-        let args = (cstr2str(target), pathgetabs(linkpath,-1));
+        let args = (utils::ptr2str(target), pathgetabs(linkpath,-1));
         self.report("LINKS", &serde_json::to_string(&args).unwrap());
     }
 
     pub unsafe fn reportsymlinkat(self: &Self, target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) {
-        let args = (cstr2str(target), pathgetabs(linkpath, newdirfd));
+        let args = (utils::ptr2str(target), pathgetabs(linkpath, newdirfd));
         self.report("LINKS", &serde_json::to_string(&args).unwrap());
     }
 
@@ -519,7 +507,7 @@ impl Tracker {
     }
 
     pub unsafe fn reportfopen(self: &Self, name: *const libc::c_char, mode: *const libc::c_char) {
-        let args = (pathgetabs(name,-1), cstr2str(mode));
+        let args = (pathgetabs(name,-1), utils::ptr2str(mode));
         if args.1.contains("w") || args.1.contains("a") {
             self.report("WRITES", &serde_json::to_string(&args).unwrap());
             if args.1.contains("+") {
@@ -543,65 +531,32 @@ impl Tracker {
         }
     }
 
-    pub unsafe fn reportexecv(self: &Self, path: *const libc::c_char, argv: *const *const libc::c_char) {
-        let mut vargv: Vec<&str> = vec![];
-        for i in 0 .. {
-            let argptr: *const c_char = *(argv.offset(i));
-            if argptr != ptr::null() {
-                vargv.push(cstr2str(argptr))
-            } else {
-                break;
-            }
-        }
-        let args = (pathgetabs(path,-1), vargv);
-        self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
-    }
-
-    pub unsafe fn reportexecvpe(self: &Self, path: *const libc::c_char, argv: *const *const libc::c_char,
-                                env: *const *const libc::c_char) {
+    pub unsafe fn reportexecvpe(self: &Self, variant: &str, path: *const libc::c_char,
+                                argv: *const *const libc::c_char, envcstr: &Vec<CString>) {
         let mut vargv: Vec<&str> = vec![];
         let mut venv: Vec<Vec<&str>> = vec![];
         for i in 0 .. {
             let argptr: *const c_char = *(argv.offset(i));
             if argptr != ptr::null() {
-                vargv.push(cstr2str(argptr))
+                vargv.push(utils::ptr2str(argptr))
             } else {
                 break;
             }
         }
-        for i in 0 .. {
-            let argptr: *const c_char = *(env.offset(i));
-            if argptr != ptr::null() {
-                venv.push(cstr2str(argptr).splitn(2,"=").collect());
-            } else {
-                break;
-            }
+        for i in envcstr.iter() {
+            venv.push(i.to_str().unwrap().splitn(2,"=").collect());
         }
-        let args = (pathgetabs(path,-1), vargv, venv);
-        self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
-    }
-
-    pub unsafe fn reportexecvp(self: &Self, path: *const libc::c_char, argv: *const *const libc::c_char) {
-        let mut vargv: Vec<&str> = vec![];
-        for i in 0 .. {
-            let argptr: *const c_char = *(argv.offset(i));
-            if argptr != ptr::null() {
-                vargv.push(cstr2str(argptr))
-            } else {
-                break;
-            }
-        }
-        let args = (pathgetabs(path,-1), vargv);
+        let args = (variant, pathgetabs(path,-1), vargv, venv);
         self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 
     pub unsafe fn reportpopen(self: &Self, command: *const libc::c_char, ctype: *const libc::c_char) {
-        let args = ("/bin/sh", cstr2str(command), cstr2str(ctype));
+        let args = ("popen", "/bin/sh", utils::ptr2str(command), utils::ptr2str(ctype));
         self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 
     pub unsafe fn reportsystem(self: &Self, command: *const libc::c_char) {
-        let args = ("/bin/sh", cstr2str(command));
+        let args = ("system",  "/bin/sh", utils::ptr2str(command));
         self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 

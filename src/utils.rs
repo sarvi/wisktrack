@@ -12,6 +12,8 @@ use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd, RawFd};
 use std::collections::{HashMap, BTreeMap};
 use std::path::{Path, PathBuf};
 use std::fs::{File,read_to_string};
+use std::process;
+use uuid::Uuid;
 use nix::unistd::dup3;
 use tracing::{Level, event};
 use redhook::debug;
@@ -19,6 +21,47 @@ use serde::de;
 use regex::{RegexSet};
 
 pub static WISKFD: AtomicUsize = AtomicUsize::new(800);
+
+lazy_static! {
+    pub static ref PUUID:String = {
+        match env::var("WISK_PUUID") {
+            Ok(uuid) => uuid,
+            Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
+        }
+    };
+
+    pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
+
+    pub static ref PID : String = process::id().to_string();
+}
+
+#[macro_export]
+macro_rules! errorexit {
+    ($msg:tt) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+                                       PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>() ); panic!() } };
+    ($msg:tt, $($arg:expr)*) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+                                       $($arg),*, PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>() ); panic!() } };
+}
+
+#[macro_export]
+macro_rules! wiskassert {
+    ($cond:expr, $msg:tt) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+                                                PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
+    ($cond:expr, $msg:tt, $($arg:expr)*) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+                                                $($arg),* , PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
+}
+
+#[macro_export]
+macro_rules! errormsg {
+    ($msg:tt) => { format!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+                                                PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
+    ($msg:tt, $($arg:expr)*) => { format!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+                                                $($arg),* , PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
+}
+
+pub unsafe fn ptr2str<'a>(ptr: *const c_char) -> &'a str {
+    CStr::from_ptr(ptr).to_str().unwrap()
+}
 
 pub fn vcstr2vecptr(vcstr: &Vec<CString>) -> Vec<*const c_char> {
     let vecptr: Vec<_> = vcstr.iter() // do NOT into_iter()
@@ -122,7 +165,7 @@ pub fn hashmapassert(hash: &HashMap<String,String>, mut values: Vec<&str>) -> bo
             }
         }
     }
-    assert_eq!(values.len(),0, "Missing environment variables: {:?}", values);
+    wiskassert!(values.len()==0, "Missing environment variables: {:?}", values);
     // if values.len() == 0 {
     //     event!(Level::INFO, "hashassert(match): {:?}",mv);
     // } else {
@@ -134,22 +177,43 @@ pub fn hashmapassert(hash: &HashMap<String,String>, mut values: Vec<&str>) -> bo
 pub fn assert_ld_preload(envp: &Vec<*const c_char>, bit64: bool) {
     let mut found=false;
     for i in envp.iter().enumerate() {
-        if envp[i.0].is_null() {
+        if i.1.is_null() {
             continue
         }
         unsafe {
-            let x = CStr::from_ptr(envp[i.0]).to_str().unwrap();
+            let x = CStr::from_ptr(*i.1).to_str().unwrap();
             if x.starts_with("LD_PRELOAD=") {
                 found=true;
                 if bit64 {
-                    assert!(x.contains("lib64/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
+                    wiskassert!(x.contains("lib64/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
                 } else {
-                    assert!(x.contains("${LIB}/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
+                    wiskassert!(x.contains("${LIB}/libwisktrack.so"), "LD_PRELOAD is wrong. Set to {}",x);
                 }
-                assert!(x.contains("LD_PRELOAD="), "Does not have LD_PRELOAD. Set to {}",x);
-                assert_eq!(i.0,0, "LD_PRELOAD in other places");
+                wiskassert!(x.contains("LD_PRELOAD="), "Does not have LD_PRELOAD. Set to {}",x);
+                wiskassert!(i.0==0, "LD_PRELOAD in other places, location:{}", i.0);
             }
         }
+    }
+}
+
+pub fn assert_execenv(envp: &Vec<*const c_char>, puuid: &str) {
+    let mut asserts = vec!("LD_PRELOAD", "WISK_TRACK", "WISK_PUUID", "WISK_WSROOT");
+    for a in asserts.iter().enumerate() {
+        let mut found = false;
+        for i in envp.iter().enumerate() {
+            if i.1.is_null() {
+                continue
+            }
+            let x = unsafe { CStr::from_ptr(*i.1).to_str().unwrap() };
+            if x.starts_with(a.1) {
+                found = true;
+                if a.0 == 0 {
+                    wiskassert!(i.0==0, "LD_PRELOAD is MUST be the first Environment Variable {}", a.1);
+                }
+                break;
+            }
+        }
+        wiskassert!(found, "WISK_ERROR: Missing Environment Variable {}",a.1);
     }
 }
 
@@ -201,7 +265,7 @@ pub fn currentenvupdate(fields: &Vec<(String,String)>) {
 pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
     let mut wiskmap: Vec<(String,String)> = vec!();
     use std::env::VarError::NotPresent;
-    assert!(env::var_os("LD_PRELOAD").unwrap().to_str().unwrap().contains("${LIB}/libwisktrack.so"),
+    wiskassert!(env::var_os("LD_PRELOAD").unwrap().to_str().unwrap().contains("${LIB}/libwisktrack.so"),
             "Initialization LD_PRELOAD is wrong. Set to {}",
             env::var_os("LD_PRELOAD").unwrap().to_str().unwrap());
     for k in fields.iter() {
@@ -271,6 +335,19 @@ where
         |e| format!("Error parsing {} path: {:?}", e.to_string(), cfgpath)
     )
 }
+
+
+// #[inline]
+// #[track_caller]
+// pub fn expect(self, msg: &str) -> T {
+//     match self {
+//         Ok(t) => t,
+//         Err(e) => {
+//             eprintln!("Failed Commad: {:?}", std::env::args().map(|x| x).collect())
+//             unwrap_failed(msg, &e)
+//         },
+//     }
+// }
 
 
 #[cfg(test)]

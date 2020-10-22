@@ -7,6 +7,27 @@
         {
             "type": "lldb",
             "request": "launch",
+            "name": "Launch Program (SSH)",
+            "target": "/bin/bash",
+            "program": "/bin/bash",
+            "args": "-c /nobackup/sarvi/xewisktest/binos/./linkfarm/host/sdk/sysroots/x86_64-xesdk-linux/usr/bin/python --version",
+            "cwd": "/nobackup/sarvi/xewisktest",
+            "env": {
+                "WISK_WSROOT": "/nobackup/sarvi/xewisktest",
+                "LD_PRELOAD": "/ws/sarvi-sjc/wisktrack/${LIB}/libwisktrack.so"
+
+            },
+            "ssh": {
+                "host": "sjc-ads-3496",
+                "cwd": "/nobackup/sarvi/xewisktest",
+                "keyfile": "/users/sarvi/.ssh/id_rsa",
+                "user": "sarvi"
+            },
+            "valuesFormatting": "parseText"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
             "name": "Cargo test",
             "cargo": {
                 "args": [
@@ -32,7 +53,7 @@
             ],
             "processCreateCommands": [
                 "settings set target.run-args value1 value2 value3",
-                "process launch"
+                "/ws/sarvi-sjc/wisktrack/scripts/cleanenv.sh"
             ]
         },
 
