@@ -48,8 +48,10 @@ use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE,
 hook! {
     unsafe fn readlink(path: *const libc::c_char, buf: *mut libc::c_char, bufsiz: libc::size_t) -> libc::ssize_t => (my_readlink,SYS_readlink, true) {
         setdebugmode!("readlink");
-        event!(Level::INFO, "readlink({}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy());
-        TRACKER.reportreadlink(path);
+        if !initialized() {
+            event!(Level::INFO, "readlink({}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy());
+            TRACKER.reportreadlink(path);
+        }
         real!(readlink)(path, buf, bufsiz)
     }
 }
@@ -58,8 +60,10 @@ hook! {
 hook! {
     unsafe fn creat(pathname: *const libc::c_char, mode: libc::mode_t) -> c_int => (my_creat,-1,true) {
         setdebugmode!("creat");
-        event!(Level::INFO, "creat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-        TRACKER.reportcreat(pathname, mode);
+        if !initialized() {
+            event!(Level::INFO, "creat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+            TRACKER.reportcreat(pathname, mode);
+        }
         real!(creat)(pathname, mode)
     }
 }
@@ -67,9 +71,27 @@ hook! {
 hook! {
     unsafe fn fopen(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen,-1,true) {
         setdebugmode!("fopen");
-        event!(Level::INFO, "fopen({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
-        TRACKER.reportfopen(name, mode);
-        real!(fopen)(name, mode)
+        if !initialized() {
+            setdebugmode!("fopen64");
+            let f : *mut libc::FILE = real!(fopen)(name, mode) as *mut libc::FILE;
+            let tempfd: c_int = libc::fileno(f);
+            if tempfd >= 0 {
+                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+                WISK_FDS.lock().unwrap().push(fd);
+                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+                libc::fdopen(tempfd, mode)
+            } else {
+                f
+            }
+        } else {
+            event!(Level::INFO, "fopen({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
+            TRACKER.reportfopen(name, mode);
+            real!(fopen)(name, mode)
+        }
     }
 }
 
@@ -77,10 +99,27 @@ hook! {
 #[cfg(target_arch = "x86_64")]
 hook! {
     unsafe fn fopen64(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen64,-1,true) {
-        setdebugmode!("fopen64");
-        event!(Level::INFO, "fopen64({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
-        TRACKER.reportfopen(name, mode);
-        real!(fopen64)(name, mode)
+        if !initialized() {
+            setdebugmode!("fopen64");
+            let f : *mut libc::FILE = real!(fopen64)(name, mode) as *mut libc::FILE;
+            let tempfd: c_int = libc::fileno(f);
+            if tempfd >= 0 {
+                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+                WISK_FDS.lock().unwrap().push(fd);
+                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+                libc::fdopen(tempfd, mode)
+            } else {
+                f
+            }
+        } else {
+            event!(Level::INFO, "fopen64({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
+            TRACKER.reportfopen(name, mode);
+            real!(fopen64)(name, mode)
+        }
     }
 }
 /* #endif */
@@ -89,16 +128,40 @@ hook! {
 dhook! {
     unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open,true) {
         setdebugmode!("open");
-        if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
-            let mut ap: std::ffi::VaListImpl = args.clone();
-            let mode: c_int = ap.arg::<c_int>();
-            event!(Level::INFO, "open({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-            TRACKER.reportopen(pathname,flags,mode);
-            real!(open)(pathname, flags, mode)
+        if !initialized() {
+            let tempfd: c_int;
+
+            if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
+                let mut ap: std::ffi::VaListImpl = args.clone();
+                let mode: c_int = ap.arg::<c_int>();
+                tempfd =real!(open)(pathname, flags, mode);
+            } else {
+                tempfd = real!(open)(pathname, flags);
+            }
+            if tempfd >= 0 {
+                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+                WISK_FDS.lock().unwrap().push(fd);
+                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+                let flags = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+                fd
+            } else {
+                tempfd
+            }
         } else {
-            event!(Level::INFO, "open({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
-            TRACKER.reportopen(pathname,flags,0);
-            real!(open)(pathname, flags)
+            if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
+                let mut ap: std::ffi::VaListImpl = args.clone();
+                let mode: c_int = ap.arg::<c_int>();
+                event!(Level::INFO, "open({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
+                TRACKER.reportopen(pathname,flags,mode);
+                real!(open)(pathname, flags, mode)
+            } else {
+                event!(Level::INFO, "open({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
+                TRACKER.reportopen(pathname,flags,0);
+                real!(open)(pathname, flags)
+            }
         }
     }
 }
@@ -116,12 +179,8 @@ dhook! {
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
-                // debug(format_args!("open64({}, {:X}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags, mode));
-                event!(Level::INFO, "open64({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
-                tempfd = real!(open64)(pathname, flags, mode)
+                tempfd = real!(open64)(pathname, flags, mode);
             } else {
-                // debug(format_args!("open64({}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags));
-                event!(Level::INFO, "open64({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
                 tempfd = real!(open64)(pathname, flags);
             }
             if tempfd >= 0 {
@@ -168,7 +227,9 @@ hook! {
         if ! WISK_FDS.lock().unwrap().iter().any(|&i| i==fd) {
         // if fd != TRACKER.fd {
             // debug(format_args!("close({})\n", fd));
-            event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
+            if !initialized() {
+                event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
+            }
             // TRACKER.reportclose(fd);
             real!(close)(fd)
         } else {
@@ -599,8 +660,10 @@ hook! {
 hook! {
     unsafe fn symlink(target: *const libc::c_char, linkpath: *const libc::c_char) -> libc::c_int => (my_symlink,-1,true) {
         setdebugmode!("symlink");
-        event!(Level::INFO, "symlink({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(), CStr::from_ptr(linkpath).to_string_lossy());
-        // TRACKER.reportsymlink(target, linkpath);
+        if !initialized() {
+            event!(Level::INFO, "symlink({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(), CStr::from_ptr(linkpath).to_string_lossy());
+            // TRACKER.reportsymlink(target, linkpath);
+        }
         real!(symlink)(target, linkpath)
     }
 }
@@ -609,8 +672,10 @@ hook! {
 hook! {
     unsafe fn symlinkat(target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) -> libc::c_int => (my_symlinkat,-1,true) {
         setdebugmode!("symlinkat");
-        event!(Level::INFO, "symlinkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(),CStr::from_ptr(linkpath).to_string_lossy() );
-        TRACKER.reportsymlinkat(target, newdirfd, linkpath);
+        if !initialized() {
+            event!(Level::INFO, "symlinkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(),CStr::from_ptr(linkpath).to_string_lossy() );
+            TRACKER.reportsymlinkat(target, newdirfd, linkpath);
+        }
         real!(symlinkat)(target, newdirfd, linkpath)
     }
 }
@@ -619,8 +684,10 @@ hook! {
 hook! {
     unsafe fn link(oldpath: *const libc::c_char, newpath: *const libc::c_char) -> libc::c_int => (my_link,-1,true) {
         setdebugmode!("link");
-        event!(Level::INFO, "link({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
-        // TRACKER.reportlink(oldpath, newpath);
+        if !initialized() {
+            event!(Level::INFO, "link({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
+            // TRACKER.reportlink(oldpath, newpath);
+        }
         real!(link)(oldpath, newpath)
     }
 }
@@ -630,8 +697,10 @@ hook! {
     unsafe fn linkat(olddirfd: libc::c_int, oldpath: *const libc::c_char,
                      newdirfd: libc::c_int, newpath: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_linkat,-1,true) {
         setdebugmode!("linkat");
-        event!(Level::INFO, "linkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
-        // TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
+        if !initialized() {
+            event!(Level::INFO, "linkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
+            // TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
+        }
         real!(linkat)(olddirfd, oldpath, newdirfd, newpath, flags)
     }
 }
@@ -640,8 +709,10 @@ hook! {
 hook! {
     unsafe fn unlink(pathname: *const libc::c_char) -> libc::c_int => (my_unlink,-1,true) {
         setdebugmode!("unlink");
-        event!(Level::INFO, "unlink({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-        // TRACKER.reportunlink(pathname);
+        if !initialized() {
+            event!(Level::INFO, "unlink({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+            // TRACKER.reportunlink(pathname);
+        }
         real!(unlink)(pathname)
     }
 }
@@ -650,8 +721,10 @@ hook! {
 hook! {
     unsafe fn unlinkat(dirfd: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_unlinkat,-1,true) {
         setdebugmode!("unlinkat");
-        event!(Level::INFO, "unlinkat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-        // TRACKER.reportunlinkat(dirfd, pathname, flags);
+        if !initialized() {
+            event!(Level::INFO, "unlinkat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+            // TRACKER.reportunlinkat(dirfd, pathname, flags);
+        }
         real!(unlinkat)(dirfd, pathname, flags)
     }
 }
@@ -660,9 +733,11 @@ hook! {
 hook! {
     unsafe fn chmod(pathname: *const libc::c_char, mode: libc::mode_t) -> libc::c_int => (my_chmod,-1,true) {
         setdebugmode!("chmod");
-        event!(Level::INFO, "chmod({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-        // TRACKER.reportchmod(pathname, mode);
-        // debug(format_args!("chmod({})", CStr::from_ptr(pathname).to_string_lossy()));
+        if !initialized() {
+            event!(Level::INFO, "chmod({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+            // TRACKER.reportchmod(pathname, mode);
+            // debug(format_args!("chmod({})", CStr::from_ptr(pathname).to_string_lossy()));
+        }
         real!(chmod)(pathname, mode)
     }
 }
@@ -671,8 +746,10 @@ hook! {
 hook! {
     unsafe fn fchmod(fd: libc::c_int, mode: libc::mode_t) -> libc::c_int => (my_fchmod,-1,true) {
         setdebugmode!("fchmod");
-        event!(Level::INFO, "fchmod({})", &UUID.as_str());
-        // TRACKER.reportfchmod(fd, mode);
+        if !initialized() {
+            event!(Level::INFO, "fchmod({})", &UUID.as_str());
+            // TRACKER.reportfchmod(fd, mode);
+        }
         real!(fchmod)(fd, mode)
     }
 }
@@ -681,8 +758,10 @@ hook! {
 hook! {
     unsafe fn fchmodat(dirfd: libc::c_int, pathname: *const libc::c_char, mode: libc::mode_t, flags: libc::c_int) -> libc::c_int => (my_fchmodat,-1,true) {
         setdebugmode!("fchmodat");
-        event!(Level::INFO, "fchmodat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-        // TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
+        if !initialized() {
+            event!(Level::INFO, "fchmodat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+            // TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
+        }
         real!(fchmodat)(dirfd, pathname, mode, flags)
     }
 }

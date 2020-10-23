@@ -286,7 +286,6 @@ pub fn initialize_statics() {
     lazy_static::initialize(&LD_PRELOAD);
     lazy_static::initialize(&CWD);
     lazy_static::initialize(&WSROOT);
-    lazy_static::initialize(&CONFIG);
     lazy_static::initialize(&UUID);
     lazy_static::initialize(&WISKTRACK);
     lazy_static::initialize(&WISKMAP);
@@ -294,8 +293,13 @@ pub fn initialize_statics() {
     lazy_static::initialize(&CMDLINE);
     lazy_static::initialize(&TRACKER);
     lazy_static::initialize(&MAPFIELDS);
-    lazy_static::initialize(&TEMPLATEMAP);
-    lazy_static::initialize(&APP64BITONLY_PATTERNS);
+    // The following are to be initialized in the main program and will happen
+    // one of the intercepted API gets called from the main program.
+    // This is to avoid doing complex operations inside the library constructor
+    // and keep the initialization limited to essentials.
+    // lazy_static::initialize(&TEMPLATEMAP);
+    // lazy_static::initialize(&CONFIG);
+    // lazy_static::initialize(&APP64BITONLY_PATTERNS);
 }
 
 pub fn render(field: &str, vals: &HashMap<&str, &str>) -> String {
