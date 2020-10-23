@@ -2,8 +2,7 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 SCRIPT="$SCRIPT_DIR/$SCRIPT_NAME"
-WORKSPACE_DIR="$( dirname "$SCRIPT_DIR" )"
-INSTANCE="$( basename "$WORKSPACE_DIR" )"
+WORKSPACE_DIR="$( pwd -P )"
 SCRIPT_SHORT_NAME="${SCRIPT_NAME%.*}"
 LIBRARY_PATH_BASE=$(realpath $SCRIPT_DIR/../)
 
@@ -11,6 +10,7 @@ LIBRARY_PATH_BASE=$(realpath $SCRIPT_DIR/../)
 # echo "LIBRARY_PATH_BASE: $LIBRARY_PATH_BASE"
 
 WISK_WSROOT="$WORKSPACE_DIR"
+DODEBUG=false
 DOSTRACE=
 LD_DEBUG=
 while true
@@ -42,6 +42,11 @@ do
     elif [[ $1 == -strace ]];  then
         echo "Option: $1"
         DOSTRACE=true
+        shift
+    elif [[ $1 == -debug ]];  then
+        echo "Option: $1"
+        DODEBUG=true
+        set -x
         shift
     else
         break
@@ -81,5 +86,5 @@ echo "Starting....."
 if [[ -z $DOSTRACE ]]; then
 time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" "$@"
 else
-time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" "$@"
+time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" -E WISK_WSROOT="$WISK_WSROOT" "$@"
 fi
