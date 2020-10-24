@@ -9,6 +9,7 @@ LIBRARY_PATH_BASE=$(realpath $SCRIPT_DIR/../)
 # echo "SCRIPT_DIR: $SCRIPT_DIR"
 # echo "LIBRARY_PATH_BASE: $LIBRARY_PATH_BASE"
 
+OSTYPE=
 WISK_WSROOT="$WORKSPACE_DIR"
 DODEBUG=false
 DOSTRACE=
@@ -48,6 +49,11 @@ do
         DODEBUG=true
         set -x
         shift
+    elif [[ $1 == -os=* ]];  then
+        echo "Option: $1"
+        OSTYPE=${1##*-os=}
+        echo "OSTYPE: $OSTYPE"
+        shift
     else
         break
     fi
@@ -79,6 +85,8 @@ rm -rf $WISK_TRACK
 if [[ ! -f "$WISK_WSROOT/wisk/config/wisktrack.ini" ]]; then
    echo "Wisk Track Config not found at $WISK_WSROOT/wisk/config/wisktrack.ini"
    mkdir -p "$WISK_WSROOT/wisk/config"
+   echo  "Installing $SCRIPT_DIR/../config/wisktrack.ini.$OSTYPE --> $WISK_WSROOT/wisk/config/wisktrack.ini"
+   cp "$SCRIPT_DIR/../config/wisktrack.ini.$OSTYPE" "$WISK_WSROOT/wisk/config/wisktrack.ini"
    exit 1
 fi
 echo "Starting....."

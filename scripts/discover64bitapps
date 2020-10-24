@@ -1,0 +1,58 @@
+#!/router/bin/python3
+import sys
+import subprocess
+import re
+import time
+
+def formattimedelta(deltatime):
+    ''' Format Delta time in hours:min:secs'''
+    hours, rem = divmod(deltatime, 3600)
+    minutes, seconds = divmod(rem, 60)
+    return "%02d:%02d:%05.5f" % (int(hours), int(minutes), seconds)
+
+def timethis(method):
+    ''' Decorator to measure time of a function '''
+    def timethis_wrapper(*args, **kw):
+        ''' Time this decorator support wrapper '''
+        tstart = time.time()
+        result = method(*args, **kw)
+        tend = time.time()
+        print("Run time(%s %05.5f seconds)"%(formattimedelta(tend - tstart), tend - tstart))
+        return result
+    return timethis_wrapper
+
+
+cmd='''
+    for i in $(find %s -type f -print ); do  
+        echo -n "$(basename $i) " 
+    done
+'''
+
+@timethis
+def compile(x):
+    re.compile(x)
+
+if __name__ == "__main__":
+    wsp = sys.argv[1]
+    p = sys.argv[2]
+    print("WSROOT: %s, PATH: %s" % (wsp, p))
+    p = "%s/%s"%(wsp,p)
+    print(p)
+    cmd = cmd % (p)
+    print(cmd)
+    x = subprocess.getoutput(cmd)
+    print(x)
+    x = x.strip()
+    print("%s"%(x))
+    x= x.split()
+    print(x)
+    x = '|'.join(x)
+    print(x)
+    x=re.escape(x)
+
+    r = "%s/(%s)"%(re.escape(p),x)
+    print(r)
+    r = r.replace(re.escape(wsp),"{{WSROOT_RE}}")
+    print(r)
+    compile(r)
+
