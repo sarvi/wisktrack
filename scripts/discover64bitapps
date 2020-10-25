@@ -1,4 +1,4 @@
-#!/router/bin/python3
+#!/router/bin/python-2.7.11
 import sys
 import subprocess
 import re
@@ -30,29 +30,26 @@ cmd='''
 
 @timethis
 def compile(x):
-    re.compile(x)
+    return re.compile(x)
 
 if __name__ == "__main__":
     wsp = sys.argv[1]
     p = sys.argv[2]
     print("WSROOT: %s, PATH: %s" % (wsp, p))
-    p = "%s/%s"%(wsp,p)
-    print(p)
-    cmd = cmd % (p)
-    print(cmd)
-    x = subprocess.getoutput(cmd)
-    print(x)
+    checkpath = sys.argv[3] if len(sys.argv) > 3 else None
+    if checkpath:
+        print("Checking path: %s"% (checkpath))
+    fp = "%s/%s"%(wsp,p)
+    cmd = cmd % (fp)
+    x = subprocess.check_output(cmd, shell=True)
     x = x.strip()
-    print("%s"%(x))
     x= x.split()
-    print(x)
-    x = '|'.join(x)
-    print(x)
-    x=re.escape(x)
+    x = '|'.join(re.escape(i).replace('\/','/').replace('\_','_') for i in x)
 
-    r = "%s/(%s)"%(re.escape(p),x)
+    r = "%s/(%s)"%(re.escape(p).replace('\/','/').replace('\_','_'),x)
+    r = r.replace(re.escape(wsp).replace('\/','/').replace('\_','_'),"{{WSROOT_RE}}")
     print(r)
-    r = r.replace(re.escape(wsp),"{{WSROOT_RE}}")
-    print(r)
-    compile(r)
+    c = compile(r)
+    if checkpath:
+        print("Match: %s" % (c.match(checkpath)))
 
