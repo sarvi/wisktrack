@@ -22,15 +22,17 @@ def timethis(method):
     return timethis_wrapper
 
 cmd_discover='''
-    for i in $(find %s -type f -print ); do
-        file $i | grep "ELF 64-bit LSB shared object" | grep "interpreter" | grep "for GNU/Linux" >/dev/null && echo "$i"
+    for i in $(find %s -xtype f -print ); do
+        x=$(realpath $i)
+        file $x | grep "ELF 64-bit LSB shared object" | grep "for GNU/Linux" >/dev/null && echo "$i"
     done
 '''
 
 
 cmd='''
-    for i in $(find %s -type f -print ); do
-        file $i | grep "ELF 64-bit LSB shared object" | grep "interpreter" | grep "for GNU/Linux" >/dev/null && echo -n "$(basename $i) "
+    for i in $(find %s -xtype f -print ); do
+        x=$(realpath $i)
+        file $x | grep "ELF 64-bit LSB shared object" | grep "for GNU/Linux" >/dev/null && echo -n "$(basename $i) "
     done
 '''
 
@@ -55,10 +57,12 @@ if __name__ == "__main__":
     if dodiscover:
         print("Discovering 64bit ony executables: %s" % (fp))
         cmd_discover = cmd_discover % (fp)
+        print("Running:\n%s" % (cmd_discover))
         print(subprocess.check_output(cmd_discover, shell=True))
         exit(0)
 
     cmd = cmd % (fp)
+    print("Running:\n%s" % (cmd))
     x = subprocess.check_output(cmd, shell=True)
     x = x.strip()
     x= x.split()

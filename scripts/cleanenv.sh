@@ -89,6 +89,10 @@ if [[ ! -f "$WISK_WSROOT/wisk/config/wisktrack.ini" ]]; then
    cp "$SCRIPT_DIR/../config/wisktrack.ini.$OSTYPE" "$WISK_WSROOT/wisk/config/wisktrack.ini"
    exit 1
 fi
+if [[ "$SCRIPT_DIR/../config/wisktrack.ini.$OSTYPE" -nt "$WISK_WSROOT/wisk/config/wisktrack.ini"]]; then
+   echo  "Updating $SCRIPT_DIR/../config/wisktrack.ini.$OSTYPE --> $WISK_WSROOT/wisk/config/wisktrack.ini"
+   cp "$SCRIPT_DIR/../config/wisktrack.ini.$OSTYPE" "$WISK_WSROOT/wisk/config/wisktrack.ini"
+fi
 echo "Starting....."
 
 if [[ -z $DOSTRACE ]]; then
