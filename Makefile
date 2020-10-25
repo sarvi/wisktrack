@@ -48,7 +48,7 @@ $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 	mkdir -p $(ROOT)/bin
 	mkdir -p $(ROOT)/config
 	install -D scripts/cleanenv.sh $(ROOT)/bin/
-	install -D config/default.ini $(ROOT)/config/
+	install -D config/default.ini* $(ROOT)/config/
 
 .PHONY: tests
 tests: tests/testprog64 tests/testprog32 basics | cargo-tests

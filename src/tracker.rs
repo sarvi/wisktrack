@@ -269,7 +269,17 @@ lazy_static! {
     };
 
     pub static ref  APP64BITONLY_PATTERNS: RegexSet = {
-        let p: Vec<String> = CONFIG.app64bitonly_patterns.iter().map(|v| render(v,&TEMPLATEMAP)).collect();
+        let p: Vec<String> = CONFIG.app64bitonly_patterns.iter().map(|v| {
+            if v.starts_with("/") {
+                render(v,&TEMPLATEMAP)
+            } else {
+                let mut x = WSROOT.to_owned();
+                x.push_str("/");
+                x.push_str(v);
+                // eprintln!("REGEX: {}", x.as_str());
+                render(x.as_str(),&TEMPLATEMAP)
+            }
+        }).collect();
         // eprintln!("p: {:?}", p);
         let x = RegexSet::new(&p).unwrap_or_else(|e| {
             errorexit!("WISK_ERROR: Error compiling list of regex in app_64bitonly_match: {:?}", e);

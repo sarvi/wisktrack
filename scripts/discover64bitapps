@@ -21,10 +21,16 @@ def timethis(method):
         return result
     return timethis_wrapper
 
+cmd_discover='''
+    for i in $(find %s -type f -print ); do
+        file $i | grep "ELF 64-bit LSB shared object" | grep "interpreter" | grep "for GNU/Linux" >/dev/null && echo "$i"
+    done
+'''
+
 
 cmd='''
-    for i in $(find %s -type f -print ); do  
-        echo -n "$(basename $i) " 
+    for i in $(find %s -type f -print ); do
+        file $i | grep "ELF 64-bit LSB shared object" | grep "interpreter" | grep "for GNU/Linux" >/dev/null && echo -n "$(basename $i) "
     done
 '''
 
@@ -33,13 +39,25 @@ def compile(x):
     return re.compile(x)
 
 if __name__ == "__main__":
+    if sys.argv[1] == "-d":
+        dodiscover = True
+        sys.argv.pop(1)
+    else:
+        dodiscover = False
     wsp = sys.argv[1]
     p = sys.argv[2]
     print("WSROOT: %s, PATH: %s" % (wsp, p))
+    print("DISCOVER: %s" % (dodiscover))
     checkpath = sys.argv[3] if len(sys.argv) > 3 else None
     if checkpath:
         print("Checking path: %s"% (checkpath))
     fp = "%s/%s"%(wsp,p)
+    if dodiscover:
+        print("Discovering 64bit ony executables: %s" % (fp))
+        cmd_discover = cmd_discover % (fp)
+        print(subprocess.check_output(cmd_discover, shell=True))
+        exit(0)
+
     cmd = cmd % (fp)
     x = subprocess.check_output(cmd, shell=True)
     x = x.strip()
