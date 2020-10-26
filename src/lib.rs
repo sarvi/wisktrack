@@ -638,7 +638,8 @@ hook! {
         event!(Level::INFO, "popen({}, {})", &UUID.as_str(), CStr::from_ptr(command).to_string_lossy());
         TRACKER.reportpopen(command, ctype);
         utils::currentenvupdate(&WISKMAP);
-        real!(popen)(command, ctype)
+        let x = real!(popen)(command, ctype);
+        x
     }
 }
 
@@ -651,7 +652,8 @@ hook! {
         event!(Level::INFO, "system({}, {})", &UUID.as_str(), CStr::from_ptr(command).to_string_lossy());
         TRACKER.reportsystem(command);
         utils::currentenvupdate(&WISKMAP);
-        real!(system)(command)
+        let x = real!(system)(command);
+        x
     }
 }
 

@@ -221,12 +221,19 @@ pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>
     for (k,v) in fields.iter() {
         if k == "LD_PRELOAD" {
             if let Some(cv) = env.get_mut(k) {
-                if !cv.split(" ").any(|i| (*i).ends_with("libwisktrack.so")) {
-                    // Ideally this should be push_str(). insert_str() because 
-                    // XR ljam build uses alib cpio_preload.so that doesnt like this.
-                    cv.insert_str(0, " ");
-                    cv.insert_str(0, v);
+                // eprintln!("Current LD_PRELOAD={}",cv.as_str());
+                wiskassert!(!cv.contains("libwisktrack.so") || cv.ends_with("libwisktrack.so"), "Environment not stripped of libwisktrack.so. Currently {}", cv.as_str());
+                if !cv.is_empty() {
+                    cv.push_str(":");
                 }
+                cv.push_str(v);
+                // eprintln!("Updated LD_PRELOAD={}",cv.as_str());
+                // if !cv.split(" ").any(|i| (*i).ends_with("libwisktrack.so")) {
+                //     // Ideally this should be push_str(). insert_str() because 
+                //     // XR ljam build uses alib cpio_preload.so that doesnt like this.
+                //     cv.insert_str(0, " ");
+                //     cv.insert_str(0, v);
+                // }
             } else {
                 env.insert(k.to_string(),v.to_string());
             }
@@ -247,9 +254,11 @@ pub fn currentenvupdate(fields: &Vec<(String,String)>) {
     for (k,v) in fields.iter() {
         if k == "LD_PRELOAD" {
             if let Ok(mut cv) = env::var(k) {
-                if !cv.split(" ").any(|i| (*i).ends_with("libwisktrack.so")) {
+                if !cv.contains("libwisktrack.so") {
                     // assert_eq!(true, false, "");
-                    cv.push_str(" ");
+                    if !cv.is_empty() {
+                        cv.push_str(":");
+                    }
                     cv.push_str(v);
                     env::set_var(k,cv.as_str());
                 }
@@ -269,9 +278,34 @@ pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
             "Initialization LD_PRELOAD is wrong. Set to {}",
             env::var_os("LD_PRELOAD").unwrap().to_str().unwrap());
     for k in fields.iter() {
-        if let Some(eval) = env::var_os(k) {
-            wiskmap.push(((*k).to_owned(), eval.into_string().unwrap()));
-            env::remove_var(k);
+        if let Ok(eval) = env::var(k) {
+            if *k == "LD_PRELOAD" {
+                // eprintln!("Found LD_PRELOAD in environnment: {}", eval);
+                let mut x = String::new();
+                for i in eval.split(":") {
+                    // eprintln!("Checking: {}", i);
+                    if i.contains("${LIB}/libwisktrack.so") {
+                        // eprintln!("Saving: (LD_PRELOAD, {})", i);
+                        wiskmap.push(((*k).to_owned(), i.to_owned()));
+                    } else {
+                        // eprintln!("LD_PRELOAD has other values {}", i);
+                        if !x.is_empty() {
+                            x.push_str(":")
+                        }
+                        x.push_str(i);
+                    }
+                }
+                if x.is_empty() {
+                    // eprintln!("Dropping LD_PRELOAD from Environment");
+                    env::remove_var(k);
+                } else {
+                    // eprintln!("New value: {}", x.as_str());
+                    env::set_var(k,x);
+                }
+            } else {
+                wiskmap.push(((*k).to_owned(), eval.to_owned()));
+                env::remove_var(k);
+            }
         }
     }
     wiskmap
