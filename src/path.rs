@@ -97,6 +97,7 @@ mod path_tests {
         assert_eq!(normalize("something//last/."), "something/last");
         assert_eq!(normalize("something//last/../../.."), "..");
         assert_eq!(normalize("/something/new.so"), "/something/new.so");
+        assert_eq!(normalize("/something////new.so"), "/something/new.so");
     }
 
     #[test]
