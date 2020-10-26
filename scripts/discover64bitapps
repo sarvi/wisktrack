@@ -24,7 +24,7 @@ def timethis(method):
 cmd_discover='''
     for i in $(find %s -xtype f -print ); do
         x=$(realpath $i)
-        file $x | grep "ELF 64-bit LSB shared object" | grep "for GNU/Linux" >/dev/null && echo "$i"
+        file $x | grep "ELF 64-bit LSB" | grep "for GNU/Linux" >/dev/null && echo "$i"
     done
 '''
 
@@ -32,7 +32,7 @@ cmd_discover='''
 cmd='''
     for i in $(find %s -xtype f -print ); do
         x=$(realpath $i)
-        file $x | grep "ELF 64-bit LSB shared object" | grep "for GNU/Linux" >/dev/null && echo -n "$(basename $i) "
+        file $x | grep "ELF 64-bit LSB" | grep "for GNU/Linux" >/dev/null && echo -n "$(basename $i) "
     done
 '''
 

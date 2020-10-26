@@ -48,6 +48,7 @@ $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 	mkdir -p $(ROOT)/bin
 	mkdir -p $(ROOT)/config
 	install -D scripts/cleanenv.sh $(ROOT)/bin/
+	install -D scripts/discover64bitapps $(ROOT)/bin/
 	install -D config/default.ini* $(ROOT)/config/
 	install -D config/wisktrack.ini* $(ROOT)/config/
 
