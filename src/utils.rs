@@ -222,11 +222,17 @@ pub fn envupdate(env: &mut HashMap<String,String>, fields: &Vec<(String,String)>
         if k == "LD_PRELOAD" {
             if let Some(cv) = env.get_mut(k) {
                 // eprintln!("Current LD_PRELOAD={}",cv.as_str());
-                wiskassert!(!cv.contains("libwisktrack.so") || cv.ends_with("libwisktrack.so"), "Environment not stripped of libwisktrack.so. Currently {}", cv.as_str());
+                let mut x = String::new();
+                let x:String = cv.split(|c| c==' ' || c==':')
+                                  .filter(|x| !x.contains("libwisktrack.so") && !x.is_empty())
+                                  .collect::<Vec<&str>>()
+                                  .join(":");
+                cv.clear();
+                cv.push_str(x.as_str());
                 if !cv.is_empty() {
                     cv.push_str(":");
                 }
-                cv.push_str(v);
+                cv.push_str(v.as_str());
                 // eprintln!("Updated LD_PRELOAD={}",cv.as_str());
                 // if !cv.split(" ").any(|i| (*i).ends_with("libwisktrack.so")) {
                 //     // Ideally this should be push_str(). insert_str() because 
@@ -254,14 +260,19 @@ pub fn currentenvupdate(fields: &Vec<(String,String)>) {
     for (k,v) in fields.iter() {
         if k == "LD_PRELOAD" {
             if let Ok(mut cv) = env::var(k) {
-                if !cv.contains("libwisktrack.so") {
-                    // assert_eq!(true, false, "");
-                    if !cv.is_empty() {
-                        cv.push_str(":");
-                    }
-                    cv.push_str(v);
-                    env::set_var(k,cv.as_str());
+                let mut x = String::new();
+                let x:String = cv.split(|c| c==' ' || c==':')
+                                  .filter(|x| !x.contains("libwisktrack.so") && !x.is_empty())
+                                  .collect::<Vec<&str>>()
+                                  .join(":");
+                cv.clear();
+                cv.push_str(x.as_str());
+                if !cv.is_empty() {
+                    cv.push_str(":");
                 }
+                cv.push_str(v.as_str());
+                // eprintln!("Updated LD_PRELOAD={}",cv.as_str());
+                env::set_var(k,cv.as_str());
             } else {
                 env::set_var(k,v.as_str());
             }
@@ -274,19 +285,25 @@ pub fn currentenvupdate(fields: &Vec<(String,String)>) {
 pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
     let mut wiskmap: Vec<(String,String)> = vec!();
     use std::env::VarError::NotPresent;
-    wiskassert!(env::var_os("LD_PRELOAD").unwrap().to_str().unwrap().contains("${LIB}/libwisktrack.so"),
-            "Initialization LD_PRELOAD is wrong. Set to {}",
+    wiskassert!(env::var_os("LD_PRELOAD").unwrap().to_str().unwrap().matches("libwisktrack.so").count()==1,
+            "Incoming LD_PRELOAD is wrong. Should have libwisktrack.so as the last entry. Set to {}",
             env::var_os("LD_PRELOAD").unwrap().to_str().unwrap());
     for k in fields.iter() {
         if let Ok(eval) = env::var(k) {
             if *k == "LD_PRELOAD" {
                 // eprintln!("Found LD_PRELOAD in environnment: {}", eval);
                 let mut x = String::new();
-                for i in eval.split(":") {
+                let mut found:bool = false;
+                for i in eval.split(|c| c==' ' || c==':') {
                     // eprintln!("Checking: {}", i);
-                    if i.contains("${LIB}/libwisktrack.so") {
+                    if i.contains("libwisktrack.so") {
                         // eprintln!("Saving: (LD_PRELOAD, {})", i);
-                        wiskmap.push(((*k).to_owned(), i.to_owned()));
+                        if !found {
+                            wiskmap.push(((*k).to_owned(), i.to_owned()));
+                            found = true;
+                        } else {
+                            errorexit!("Found duplicate values in LD_PRELOAD={}", eval);
+                        }
                     } else {
                         // eprintln!("LD_PRELOAD has other values {}", i);
                         if !x.is_empty() {

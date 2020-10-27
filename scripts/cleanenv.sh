@@ -66,9 +66,11 @@ RUST_BACKTRACE=1
 # rm -f `pwd`/wisktrack.pipe
 # mknod `pwd`/wisktrack.pipe p
 # WISK_TRACK=`pwd`/wisktrack.pipe
-WISK_TRACK=`pwd`/wisktrack.file
+WISK_TRACK=$WISK_WSROOT/wisktrack.file
+# WISK_TRACK=`pwd`/wisktrack.file
 # WISK_TRACK=`pwd`/wisktrack
 # WISK_TRACK=wisktrack.file
+WISK_TRACK=
 LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
 # LD_PRELOAD="$LIBRARY_PATH_BASE/lib64/libwisktrack.so"
 STRACEDIR="strace/"
@@ -80,7 +82,11 @@ echo "PATH: $PATH"
 
 rm -rf $STRACEDIR ; mkdir $STRACEDIR
 rm -f $WISK_TRACE
-rm -rf $WISK_TRACK
+if [[ -z "$WISK_TRACK" ]]; then
+    rm -rf $WISK_WSROOT/wisktrack.file
+else
+    rm -rf $WISK_TRACK
+fi
 
 if [[ ! -f "$WISK_WSROOT/wisk/config/wisktrack.ini" ]]; then
    echo "Wisk Track Config not found at $WISK_WSROOT/wisk/config/wisktrack.ini"
