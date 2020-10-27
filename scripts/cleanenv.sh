@@ -1,7 +1,9 @@
 #!/bin/bash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SCRIPT_DIR=$(realpath $SCRIPT_DIR)
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 SCRIPT="$SCRIPT_DIR/$SCRIPT_NAME"
+SCRIPT=$(realpath $SCRIPT)
 WORKSPACE_DIR="$( pwd -P )"
 SCRIPT_SHORT_NAME="${SCRIPT_NAME%.*}"
 LIBRARY_PATH_BASE=$(realpath $SCRIPT_DIR/../)
