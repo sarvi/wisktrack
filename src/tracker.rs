@@ -2,19 +2,17 @@
 
 use std::mem;
 use std::sync::Mutex;
-use std::{env, ptr};
+use std::{env, ptr, process, fs};
 use std::ffi::{CStr, CString, OsString};
+use std::os;
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd};
 // use std::sync::Mutex;
 use std::io::prelude::*;
 use std::io::{Error, Read, Write};
 use std::path::{Path, PathBuf};
-use std::fs;
 use std::string::String;
-use std::env::var;
-use std::process;
 use std::collections::HashMap;
-use libc::{c_char,c_int, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open};
+use libc::{c_char,c_int, O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open};
 use nix::unistd::dup2;
 // use serde::{Serialize, Deserialize};
 use base_62;
@@ -37,11 +35,11 @@ pub const DEBUGMODE:bool = true;
 macro_rules! setdebugmode {
     ($operation:expr) => {
             if DEBUGMODE {
-                if !std::env::var("RUST_BACKTRACE").is_ok() {
-                    std::env::set_var("RUST_BACKTRACE", "1");
-                    std::env::set_var("RUST_DEBUG", $operation);
+                if !env::var("RUST_BACKTRACE").is_ok() {
+                    env::set_var("RUST_BACKTRACE", "1");
+                    env::set_var("RUST_DEBUG", $operation);
                 }
-                // assert_eq!(std::env::var("RUST_BACKTRACE").is_ok(), true, "Command:  {} : {} : {}\n{:?}",
+                // assert_eq!(env::var("RUST_BACKTRACE").is_ok(), true, "Command:  {} : {} : {}\n{:?}",
                 //            $operation, TRACKER.uuid, TRACKER.cmdline.join(" "),Backtrace::new());
             }
     };
@@ -184,21 +182,21 @@ lazy_static! {
 
     pub static ref WISKTRACK:String = {
         // debug(format_args!("Here\n"));        
-        let mut fname:String = match var("WISK_TRACK") {
+        let mut fname:String = match env::var("WISK_TRACK") {
             Ok(v) =>  {
                 if v.is_empty() {
-                    String::from(format!("{}/track.file", WSROOT.as_str()))
+                    String::from(format!("{}/wisktrack.file", WSROOT.as_str()))
                 } else {
                     v
                 }
             },
             Err(_) => {
                 // debug(format_args!("WISK_TRACK is missing\n"));
-                String::from(format!("{}/track.file", WSROOT.as_str()))
+                String::from(format!("{}/wisktrack.file", WSROOT.as_str()))
             },
         };
         if !fname.ends_with(".file")  {
-            let t = format!("/wisktrack.{}", &UUID.as_str());
+            let t = format!("/track.{}", &UUID.as_str());
             fname.push_str(&t);
             // debug(format_args!("Updated Trackfile: {}\n", &fname));
         }
