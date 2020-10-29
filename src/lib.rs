@@ -48,7 +48,7 @@ use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE,
 hook! {
     unsafe fn readlink(path: *const libc::c_char, buf: *mut libc::c_char, bufsiz: libc::size_t) -> libc::ssize_t => (my_readlink,SYS_readlink, true) {
         setdebugmode!("readlink");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "readlink({}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy());
             TRACKER.reportreadlink(path);
         }
@@ -60,7 +60,7 @@ hook! {
 hook! {
     unsafe fn creat(pathname: *const libc::c_char, mode: libc::mode_t) -> c_int => (my_creat,-1,true) {
         setdebugmode!("creat");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "creat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
             TRACKER.reportcreat(pathname, mode);
         }
@@ -227,7 +227,7 @@ hook! {
         if ! WISK_FDS.lock().unwrap().iter().any(|&i| i==fd) {
         // if fd != TRACKER.fd {
             // debug(format_args!("close({})\n", fd));
-            if !initialized() {
+            if initialized() {
                 event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
             }
             // TRACKER.reportclose(fd);
@@ -662,9 +662,9 @@ hook! {
 hook! {
     unsafe fn symlink(target: *const libc::c_char, linkpath: *const libc::c_char) -> libc::c_int => (my_symlink,-1,true) {
         setdebugmode!("symlink");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "symlink({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(), CStr::from_ptr(linkpath).to_string_lossy());
-            // TRACKER.reportsymlink(target, linkpath);
+            TRACKER.reportsymlink(target, linkpath);
         }
         real!(symlink)(target, linkpath)
     }
@@ -674,7 +674,7 @@ hook! {
 hook! {
     unsafe fn symlinkat(target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) -> libc::c_int => (my_symlinkat,-1,true) {
         setdebugmode!("symlinkat");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "symlinkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(),CStr::from_ptr(linkpath).to_string_lossy() );
             TRACKER.reportsymlinkat(target, newdirfd, linkpath);
         }
@@ -686,9 +686,9 @@ hook! {
 hook! {
     unsafe fn link(oldpath: *const libc::c_char, newpath: *const libc::c_char) -> libc::c_int => (my_link,-1,true) {
         setdebugmode!("link");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "link({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
-            // TRACKER.reportlink(oldpath, newpath);
+            TRACKER.reportlink(oldpath, newpath);
         }
         real!(link)(oldpath, newpath)
     }
@@ -699,9 +699,9 @@ hook! {
     unsafe fn linkat(olddirfd: libc::c_int, oldpath: *const libc::c_char,
                      newdirfd: libc::c_int, newpath: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_linkat,-1,true) {
         setdebugmode!("linkat");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "linkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
-            // TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
+            TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
         }
         real!(linkat)(olddirfd, oldpath, newdirfd, newpath, flags)
     }
@@ -711,9 +711,9 @@ hook! {
 hook! {
     unsafe fn unlink(pathname: *const libc::c_char) -> libc::c_int => (my_unlink,-1,true) {
         setdebugmode!("unlink");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "unlink({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-            // TRACKER.reportunlink(pathname);
+            TRACKER.reportunlink(pathname);
         }
         real!(unlink)(pathname)
     }
@@ -723,9 +723,9 @@ hook! {
 hook! {
     unsafe fn unlinkat(dirfd: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_unlinkat,-1,true) {
         setdebugmode!("unlinkat");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "unlinkat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-            // TRACKER.reportunlinkat(dirfd, pathname, flags);
+            TRACKER.reportunlinkat(dirfd, pathname, flags);
         }
         real!(unlinkat)(dirfd, pathname, flags)
     }
@@ -735,9 +735,9 @@ hook! {
 hook! {
     unsafe fn chmod(pathname: *const libc::c_char, mode: libc::mode_t) -> libc::c_int => (my_chmod,-1,true) {
         setdebugmode!("chmod");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "chmod({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-            // TRACKER.reportchmod(pathname, mode);
+            TRACKER.reportchmod(pathname, mode);
             // debug(format_args!("chmod({})", CStr::from_ptr(pathname).to_string_lossy()));
         }
         real!(chmod)(pathname, mode)
@@ -748,9 +748,9 @@ hook! {
 hook! {
     unsafe fn fchmod(fd: libc::c_int, mode: libc::mode_t) -> libc::c_int => (my_fchmod,-1,true) {
         setdebugmode!("fchmod");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "fchmod({})", &UUID.as_str());
-            // TRACKER.reportfchmod(fd, mode);
+            TRACKER.reportfchmod(fd, mode);
         }
         real!(fchmod)(fd, mode)
     }
@@ -760,9 +760,9 @@ hook! {
 hook! {
     unsafe fn fchmodat(dirfd: libc::c_int, pathname: *const libc::c_char, mode: libc::mode_t, flags: libc::c_int) -> libc::c_int => (my_fchmodat,-1,true) {
         setdebugmode!("fchmodat");
-        if !initialized() {
+        if initialized() {
             event!(Level::INFO, "fchmodat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
-            // TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
+            TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
         }
         real!(fchmodat)(dirfd, pathname, mode, flags)
     }
