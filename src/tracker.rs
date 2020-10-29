@@ -442,7 +442,7 @@ impl Tracker {
             minlen = &UUID.as_str().len() + op.len() + 2 + 1;
             availen = SENDLIMIT - minlen;
         };
-        (&self.file).flush().unwrap();
+        // (&self.file).flush().unwrap();
     }
     
     // pub fn reportenv(self: &Self,: env====) {

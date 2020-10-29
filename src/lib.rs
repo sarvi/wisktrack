@@ -835,6 +835,8 @@ fn cfoo() {
 #[dtor]
 fn dfoo() {
     // debug(format_args!("Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()));
+    (&TRACKER.file).flush().unwrap();
+
 }
 
 
