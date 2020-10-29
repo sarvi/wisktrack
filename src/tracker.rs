@@ -335,26 +335,26 @@ unsafe fn pathget(ipath: *const libc::c_char) -> String {
 }
 
 unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
-    let ipath = pathget(ipath);
-    let ipath = if ipath.starts_with("/") {
-        ipath
+    let mut ipath = pathget(ipath);
+    if ipath.starts_with("/") {
+        crate::path::normalize(ipath.as_str())
     } else {
-        let mut dirpath: PathBuf;
-        if fd >= 0 {
-            dirpath = PathBuf::from(&CWD.as_str());
-            // dirpath = fd2path(fd);
-        } else if fd == AT_FDCWD {
-            dirpath = PathBuf::from(&CWD.as_str());
+        if (fd == AT_FDCWD || fd < 0) {
+            if let Ok(cwd) = env::current_dir() {
+                let mut x=cwd.to_str().unwrap().to_owned();
+                x.push_str("/");
+                x.push_str(ipath.as_str());
+                crate::path::normalize(x.as_str())
+            } else {
+                ipath.insert_str(0,"<UNKNOWNPATH>/");
+                crate::path::normalize(ipath.as_str())
+            }
         } else {
-            dirpath = PathBuf::from(&CWD.as_str());
+            let mut p = crate::path::fd_to_pathstr(fd);
+            p.push_str("/");
+            p.push_str(ipath.as_str());
+            crate::path::normalize(p.as_str())
         }
-        dirpath.push(ipath);
-        path2str(dirpath)
-    };
-    if ipath.starts_with(&WSROOT.as_str()) {
-        ipath.replacen(&WSROOT.as_str(),"",1)
-    } else {
-        ipath
     }
 }
 
@@ -464,12 +464,12 @@ impl Tracker {
     // }
 
     pub unsafe fn reportreadlink(self: &Self, path: *const libc::c_char) {
-        let args = (&pathgetabs(path,-1), );
+        let args = (&pathgetabs(path,AT_FDCWD), );
         self.report("READLINK", &serde_json::to_string(&args).unwrap());
     }
 
     pub unsafe fn reportsymlink(self: &Self, target: *const libc::c_char, linkpath: *const libc::c_char) {
-        let args = (utils::ptr2str(target), pathgetabs(linkpath,-1));
+        let args = (utils::ptr2str(target), pathgetabs(linkpath,AT_FDCWD));
         self.report("LINKS", &serde_json::to_string(&args).unwrap());
     }
 
@@ -479,7 +479,7 @@ impl Tracker {
     }
 
     pub unsafe fn reportlink(self: &Self, oldpath: *const c_char, newpath: *const c_char) {
-        let args = (&pathgetabs(oldpath,-1), &pathgetabs(newpath, -1));
+        let args = (&pathgetabs(oldpath,AT_FDCWD), &pathgetabs(newpath,AT_FDCWD));
         self.report("LINKS", &serde_json::to_string(&args).unwrap());
     }
 
@@ -489,7 +489,7 @@ impl Tracker {
     }
 
     pub unsafe fn reportunlink(self: &Self, pathname: *const libc::c_char) {
-        let args = (pathgetabs(pathname,-1),);
+        let args = (pathgetabs(pathname,AT_FDCWD),);
         self.report("UNLINKS", &serde_json::to_string(&args).unwrap());
     }
 
@@ -499,7 +499,7 @@ impl Tracker {
     }
 
     pub unsafe fn reportchmod(self: &Self, pathname: *const libc::c_char, mode: libc::mode_t) {
-        let args = (pathgetabs(pathname,-1), mode);
+        let args = (pathgetabs(pathname,AT_FDCWD), mode);
         self.report("CHMODS", &serde_json::to_string(&args).unwrap());
     }
 
@@ -514,12 +514,12 @@ impl Tracker {
     }
 
     pub unsafe fn reportcreat(self: &Self, pathname: *const libc::c_char, mode: libc::mode_t) {
-        let args = (pathgetabs(pathname,-1), mode);
+        let args = (pathgetabs(pathname,AT_FDCWD), mode);
         self.report("WRITES", &serde_json::to_string(&args).unwrap());
     }
 
     pub unsafe fn reportfopen(self: &Self, name: *const libc::c_char, mode: *const libc::c_char) {
-        let args = (pathgetabs(name,-1), utils::ptr2str(mode));
+        let args = (pathgetabs(name,AT_FDCWD), utils::ptr2str(mode));
         if args.1.contains("w") || args.1.contains("a") {
             self.report("WRITES", &serde_json::to_string(&args).unwrap());
             if args.1.contains("+") {
@@ -534,12 +534,21 @@ impl Tracker {
     }
 
     pub unsafe fn reportopen(self: &Self, pathname: *const libc::c_char, flags: libc::c_int, mode: libc::c_int) {
-        if (flags | O_CREAT) == O_CREAT {
-            let args = (pathgetabs(pathname,-1), flags, mode);
-            self.report("OPEN", &serde_json::to_string(&args).unwrap());
+        let oper = if (flags & O_RDONLY) == O_RDONLY || (flags & O_APPEND) == O_APPEND {
+            "READS"
+        } else if (flags & O_WRONLY) == O_WRONLY {
+            "WRITES"
+        } else if (flags & O_RDWR) == O_RDWR {
+            "READWRITES"
         } else {
-            let args = (pathgetabs(pathname,-1), flags);
-            self.report("OPEN", &serde_json::to_string(&args).unwrap());
+            "UNKNOWN"
+        };
+        if (flags & O_CREAT) == O_CREAT {
+            let args = (pathgetabs(pathname,AT_FDCWD), flags, mode);
+            self.report(oper, &serde_json::to_string(&args).unwrap());
+        } else {
+            let args = (pathgetabs(pathname,AT_FDCWD), flags);
+            self.report(oper, &serde_json::to_string(&args).unwrap());
         }
     }
 
@@ -558,7 +567,7 @@ impl Tracker {
         for i in envcstr.iter() {
             venv.push(i.to_str().unwrap().splitn(2,"=").collect());
         }
-        let args = (variant, pathgetabs(path,-1), vargv, venv);
+        let args = (variant, pathgetabs(path,AT_FDCWD), vargv, venv);
         self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 

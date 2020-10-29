@@ -1,10 +1,33 @@
 use std::ffi::{CStr, CString};use nix::fcntl::OFlag;
-use std::fmt;
-use std::error;
+use std::{fs, fmt, error};
 use std::path::{Path, PathBuf};
+use std::cell::RefCell;
+use libc::{c_char,c_int, PATH_MAX, SYS_readlink};
 use tracing::{Level, event};
 use redhook::debug;
 use regex::{RegexSet};
+
+pub fn readlink(link: &str) -> String {
+    thread_local! {
+        pub static BUFFER: RefCell<Vec<i8>> = RefCell::new(vec![0; PATH_MAX as usize]);
+    }
+    let pathname = CString::new(link).expect("Not a valid path string");
+    BUFFER.with(|f| {
+        let mut b = f.borrow_mut();
+        unsafe {
+            let size = libc::syscall(SYS_readlink, pathname.as_ptr(), (*b).as_ptr(), PATH_MAX as usize) as usize;
+            if size>=0 {
+                b[size] = 0;
+            }
+            let x = CStr::from_ptr((*b).as_ptr()).to_owned();
+            x.into_string().expect("WISK_ERROR: Invalid path returned by readlink")
+        }
+    })
+}
+
+pub fn fd_to_pathstr(fd: c_int) -> String {
+    readlink(format!("/proc/self/fd/{}", fd).as_str()).to_owned()
+}
 
 pub fn join(p1: &str, p2: &str) -> String {
     if p2.starts_with("/") {
@@ -107,6 +130,11 @@ mod path_tests {
         assert_eq!(join(".//", "something.so"), ".//something.so");
         assert_eq!(join("./.", "something.so"), "././something.so");
         assert_eq!(join("././", "something.so"), "././something.so");
+    }
+
+    #[test]
+    fn test_readlink() {
+        assert!(!readlink("/proc/self").is_empty());
     }
 
 }

@@ -588,7 +588,7 @@ hook! {
                                    envcstr[0].as_c_str().to_str().unwrap()
                                              .replace("${LIB}/libwisktrack.so",
                                                       "lib64/libwisktrack.so")).unwrap();
-        let pathstr = unsafe { CStr::from_ptr(path) };
+        let pathstr = CStr::from_ptr(path);
         if path::is_match(pathstr.to_str().unwrap(), &APP64BITONLY_PATTERNS, "") {
             envp[0] = ld_preload_64bit.as_ptr();
             // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
