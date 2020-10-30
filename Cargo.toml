@@ -1,6 +1,6 @@
 [package]
 name = "wisktrack"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Saravanan Shanmugham <sarvi@cisco.com>"]
 description = "LD_PRELOAD based depedency tracker"
 edition = "2018"

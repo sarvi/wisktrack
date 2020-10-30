@@ -1,5 +1,6 @@
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+set -x
+SCRIPT_DIR="$(cd "$(dirname $(realpath "${BASH_SOURCE[0]}"))" && pwd -P)"
 SCRIPT_DIR=$(realpath $SCRIPT_DIR)
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 SCRIPT="$SCRIPT_DIR/$SCRIPT_NAME"
