@@ -30,9 +30,10 @@ use std::{env, ptr};
 use std::ffi::{CStr, CString};
 use core::cell::Cell;
 use ctor::{ctor, dtor};
+use std::sync::atomic;
 use paste::paste;
 use tracing::{Level };
-use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open, INT_MAX};
+use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open, SYS_close, INT_MAX};
 use nix::unistd::dup2;
 use nix::unistd::PathconfVar;
 use tracing::dispatcher::with_default;
@@ -41,9 +42,8 @@ use backtrace::Backtrace;
 use std::io::{Error, Read, Result, Write};
 use errno::{Errno, errno, set_errno};
 use utils::{ WISKFD, PUUID, UUID};
-use tracker::{TRACKERFD, WISK_FDS, WISKMAP, TRACKER, DEBUGMODE, CMDLINE,
+use tracker::{TRACKERFD, WISKMAP, TRACKER, DEBUGMODE, CMDLINE,
               APP64BITONLY_PATTERNS};
-
 
 hook! {
     unsafe fn readlink(path: *const libc::c_char, buf: *mut libc::c_char, bufsiz: libc::size_t) -> libc::ssize_t => (my_readlink,SYS_readlink, true) {
@@ -77,13 +77,13 @@ hook! {
             let tempfd: c_int = libc::fileno(f);
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+                unsafe { libc::syscall(SYS_close, tempfd) };
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                WISK_FDS.lock().unwrap().push(fd);
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
                 libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-                libc::fdopen(tempfd, mode)
+                libc::fdopen(fd, mode)
             } else {
                 f
             }
@@ -105,13 +105,13 @@ hook! {
             let tempfd: c_int = libc::fileno(f);
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+                unsafe { libc::syscall(SYS_close, tempfd) };
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                WISK_FDS.lock().unwrap().push(fd);
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
                 libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-                libc::fdopen(tempfd, mode)
+                libc::fdopen(fd, mode)
             } else {
                 f
             }
@@ -140,9 +140,9 @@ dhook! {
             }
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+                unsafe { libc::syscall(SYS_close, tempfd) };
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                WISK_FDS.lock().unwrap().push(fd);
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
                 libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
@@ -185,9 +185,9 @@ dhook! {
             }
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, TRACKERFD+tempfd).unwrap();
+                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+                unsafe { libc::syscall(SYS_close, tempfd) };
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                WISK_FDS.lock().unwrap().push(fd);
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
                 libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
@@ -224,8 +224,7 @@ hook! {
         // from a signal handler closing files and cleaning up a exited/forked process, while
         // the main thread is also in malloc.
         // setdebugmode!("close");
-        if ! WISK_FDS.lock().unwrap().iter().any(|&i| i==fd) {
-        // if fd != TRACKER.fd {
+        if fd != TRACKER.fd {
             // debug(format_args!("close({})\n", fd));
             if initialized() {
                 event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
@@ -271,7 +270,11 @@ fn execvpe_common (
     let mut envp = utils::vcstr2vecptr(&envcstr);
     envp.push(std::ptr::null());
     let mut e = errno();
-    let cwd = env::current_dir().unwrap();
+    let cwd = if let Ok(cwd) = env::current_dir() {
+        cwd.to_str().unwrap().to_owned()
+    } else {
+        String::new()
+    };
     let ld_preload = CString::new(
                          envcstr[0].as_c_str().to_str().unwrap()
                                    .replace("lib64/libwisktrack.so",
@@ -281,7 +284,6 @@ fn execvpe_common (
                                          .replace("${LIB}/libwisktrack.so",
                                                   "lib64/libwisktrack.so")).unwrap();
 
-    let cwdstr= cwd.to_str().unwrap();
     let file = unsafe {
         assert!(!file.is_null());
         CStr::from_ptr(file) 
@@ -297,7 +299,7 @@ fn execvpe_common (
     let argv = utils::cpptr2vecptr(argv);
      /* Don't search when it contains a slash.  */
     if ( !search || file_bytes.iter().any(|i| *i as char == '/'))  { //. strchr (file, '/') != NULL)
-        if path::is_match(file.to_str().unwrap(), &APP64BITONLY_PATTERNS, &cwdstr) {
+        if path::is_match(file.to_str().unwrap(), &APP64BITONLY_PATTERNS, cwd.as_str()) {
             envp[0] = ld_preload_64bit.as_ptr();
             // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
             // TRACKER.report("APP64ONLY", &utils::cpptr2str(argvold, " "));
@@ -326,7 +328,7 @@ fn execvpe_common (
         p.push_str("/");
         p.push_str(file.to_str().unwrap());
         let buffer = CString::new(p.as_str()).expect("Trouble Mapping executable String to CString");
-        if path::is_match(buffer.to_str().unwrap(), &APP64BITONLY_PATTERNS, &cwdstr) {
+        if path::is_match(buffer.to_str().unwrap(), &APP64BITONLY_PATTERNS, cwd.as_str()) {
             envp[0] = ld_preload_64bit.as_ptr();
             // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
             // TRACKER.report("DEBUGDATA_64ONLY", &utils::cpptr2str(argvold, " "));
@@ -788,16 +790,16 @@ hook! {
 // }
 
 fn dlsym_intialize() {
-    // real!(readlink);
-    // real!(creat);
-    // real!(open);
+    real!(readlink);
+    real!(creat);
+    real!(open);
     // real!(openat);
-    // real!(fopen);
-    // #[cfg(target_arch = "x86_64")]
-    // {
-    //     real!(open64);
-    //     real!(fopen64);
-    // }
+    real!(fopen);
+    #[cfg(target_arch = "x86_64")]
+    {
+        real!(open64);
+        real!(fopen64);
+    }
     real!(execv);
     real!(execvp);
     real!(execvpe);
@@ -806,22 +808,22 @@ fn dlsym_intialize() {
     real!(posix_spawn);
     real!(posix_spawnp);
     real!(popen);
-    // real!(link);
-    // real!(linkat);
-    // real!(symlink);
-    // real!(symlinkat);
-    // real!(unlink);
-    // real!(unlinkat);
-    // real!(chmod);
-    // real!(fchmod);
-    // real!(fchmodat);
+    real!(link);
+    real!(linkat);
+    real!(symlink);
+    real!(symlinkat);
+    real!(unlink);
+    real!(unlinkat);
+    real!(chmod);
+    real!(fchmod);
+    real!(fchmodat);
 }
 
 #[cfg(not(test))]
 #[ctor]
 fn cfoo() {
-    // debug(format_args!("Constructor: {}\n", std::process::id()));
-    // debug(format_args!("Incoming Environment: {:?}\n", env::vars_os().map(|(x,y)| x.to_str().unwrap().to_owned()).collect::<Vec<String>>()));
+    event!(Level::INFO, "Constructor: {}\n", std::process::id());
+    event!(Level::INFO, "Incoming Environment: {:?}\n", env::vars_os().map(|(x,y)| x.to_str().unwrap().to_owned()).collect::<Vec<String>>());
     dlsym_intialize();
     // assert_ne!(&TRACKER.pid, "");
     // MY_DISPATCH;
@@ -829,12 +831,12 @@ fn cfoo() {
     tracker::initialize_statics();
     TRACKER.initialize();
     redhook::initialize();
-    // debug(format_args!("Constructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()));
+    event!(Level::INFO, "Constructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
 }
 
 #[dtor]
 fn dfoo() {
-    // debug(format_args!("Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()));
+    event!(Level::INFO, "Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
     (&TRACKER.file).flush().unwrap();
 
 }

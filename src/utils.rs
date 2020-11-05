@@ -349,18 +349,28 @@ pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
 // }
 
 
-pub fn internal_open(filename: &str, mode: i32) -> File {
+pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool) -> io::Result<File> {
     let fd = WISKFD.fetch_add(1, Ordering::Relaxed) as i32;
     let filename = CString::new(filename).unwrap();
     let tempfd = unsafe {
-        libc::syscall(SYS_open, filename.as_ptr(), mode,
-                      S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)
+        libc::syscall(SYS_open, filename.as_ptr(), flags, mode)
+                    //   S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)
+    } as i32;
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let retfd = if relocfd {
+        let fd = dup3(tempfd as i32, fd, OFlag::from_bits(O_CLOEXEC|O_LARGEFILE|O_APPEND|O_CREAT).unwrap()).unwrap();
+        unsafe { libc::syscall(SYS_close, tempfd) };
+        event!(Level::INFO, "File Descriptor(Relocated): {} {}\n", tempfd, fd);
+        fd
+    } else {
+        event!(Level::INFO, "File Descriptor(Original): {}\n", tempfd);
+        tempfd
     };
-    let fd = dup3(tempfd as i32, fd, OFlag::from_bits(O_CLOEXEC|O_LARGEFILE|O_APPEND|O_CREAT).unwrap()).unwrap();
-    let f:File = unsafe { FromRawFd::from_raw_fd(fd as i32) };
-    debug(format_args!("File Descriptor: {}, {:?}", tempfd, &f));
-    (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
-    f
+    let f:File = unsafe { FromRawFd::from_raw_fd(retfd as i32) };
+    // (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
+    Ok(f)
 }
 
 pub fn read_config<T>(basepath: &str, conf: &str) -> Result<T, String>
@@ -382,9 +392,13 @@ where
     let cfgpath = Path::new(&cfgpath).join("config").join(conf).canonicalize().map_err(
         |e| format!("Error finding {} path: {:?}", e.to_string(), cfgpath)
     )?;
-    let mut file = File::open(cfgpath.to_owned()).map_err(
-        |e| format!("Error opening {} path: {:?}", e.to_string(), cfgpath)
-    )?;
+    let cfgpathstr = cfgpath.to_str().unwrap();
+    let mut file = internal_open(cfgpathstr, 0,0, false).map_err(
+            |e| format!("Error opening {} path: {}", e.to_string(), cfgpathstr)
+        )?;
+    // let mut file = File::open(cfgpath.to_owned()).map_err(
+    //     |e| format!("Error opening {} path: {:?}", e.to_string(), cfgpath)
+    // )?;
     let mut content = String::new();
     let size = file.read_to_string(&mut content).map_err(
         |e| format!("Error reading {} path: {:?}", e.to_string(), cfgpath)

@@ -1,12 +1,10 @@
 
-
 use std::mem;
-use std::sync::Mutex;
+use std::sync::RwLock;
 use std::{env, ptr, process, fs};
 use std::ffi::{CStr, CString, OsString};
 use std::os;
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd};
-// use std::sync::Mutex;
 use std::io::prelude::*;
 use std::io::{Error, Read, Write};
 use std::path::{Path, PathBuf};
@@ -107,8 +105,6 @@ pub struct Tracker {
 
 
 lazy_static! {
-    pub static ref WISK_FDS: Mutex<Vec<c_int>> = Mutex::new(Vec::new());
-
     pub static ref ORIGINAL_ENV: HashMap<String,String> = env::vars().collect();
 
     pub static ref LD_PRELOAD:String = {
@@ -279,24 +275,30 @@ lazy_static! {
     };
 
     pub static ref  APP64BITONLY_PATTERNS: RegexSet = {
-        let p: Vec<String> = CONFIG.app64bitonly_patterns.iter().map(|v| {
-            if v.starts_with("/") {
-                render(v,&TEMPLATEMAP)
-            } else {
-                let mut x = WSROOT.to_owned();
-                x.push_str("/");
-                x.push_str(v);
-                // eprintln!("REGEX: {}", x.as_str());
-                render(x.as_str(),&TEMPLATEMAP)
-            }
-        }).collect();
-        // eprintln!("p: {:?}", p);
+        event!(Level::INFO, "APP64BITONLY_PATTERNS Reading....");
+        let p: Vec<String> = if !CONFIG.app64bitonly_patterns.is_empty() {
+            CONFIG.app64bitonly_patterns.iter().map(|v| {
+                if v.starts_with("^") {
+                    render(v,&TEMPLATEMAP)
+                } else {
+                    let mut x = "^".to_owned();
+                    x.push_str("{{RE_WSROOT}}");
+                    x.push_str("/");
+                    x.push_str(v);
+                    // eprintln!("REGEX: {}", x.as_str());
+                    render(x.as_str(),&TEMPLATEMAP)
+                }
+            }).collect()
+        } else {
+            vec!("^NOMATCH/.*$".to_owned())
+        };
+        event!(Level::INFO,"p: {:?}", p);
         let x = RegexSet::new(&p).unwrap_or_else(|e| {
             errorexit!("WISK_ERROR: Error compiling list of regex in app_64bitonly_match: {:?}", e);
         });
+        event!(Level::INFO, "APP64BITONLY_PATTERNS Reading....Done");
         x
     };
-
 }
 
 pub fn initialize_statics() {
