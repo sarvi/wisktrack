@@ -31,7 +31,7 @@ use std::ffi::{CStr, CString};
 use core::cell::Cell;
 use ctor::{ctor, dtor};
 use paste::paste;
-use tracing::{Level, event, };
+use tracing::{Level };
 use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open, INT_MAX};
 use nix::unistd::dup2;
 use nix::unistd::PathconfVar;

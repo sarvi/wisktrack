@@ -19,14 +19,15 @@ use base_62;
 use filepath::FilePath;
 use tracing::dispatcher::{with_default, Dispatch};
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing::{Level, event, };
+use tracing::{Level};
 // use redhook::ld_preload::make_dispatch;
 use redhook::debug;
 use backtrace::Backtrace;
 use string_template::Template;
 use regex::{RegexSet, escape};
 use crate::utils;
-use crate::errorexit;
+use crate::{errorexit, event};
+use crate::path;
 use utils::{PUUID, UUID, PID};
 
 pub const DEBUGMODE:bool = true;
@@ -133,8 +134,13 @@ lazy_static! {
     };
 
     pub static ref CWD : String = {
-        let cwdostr = env::current_dir().unwrap().into_os_string();
-        let rv = cwdostr.into_string().unwrap();
+        let rv = if let Ok(cwd) = env::current_dir() {
+            let cwdostr = cwd.into_os_string();
+            let rv = cwdostr.into_string().unwrap();
+            rv
+        } else {
+            String::new()
+        };
         // debug(format_args!("CWD: {}\n", rv.as_str()));
         rv
     };
@@ -146,7 +152,6 @@ lazy_static! {
                 if wsroot.is_empty() {
                     errorexit!("WISK_WSROOT is empty. MUST be set to point to the root of the build workspace. Curret Value: {}",
                               wsroot);
-                    wsroot.push_str(CWD.as_str());
                 }
                 if !Path::new(&wsroot).exists() {
                     fs::create_dir_all(&wsroot).unwrap();
@@ -155,17 +160,22 @@ lazy_static! {
             },
             None => {
                 errorexit!("WISK_ERROR: WISK_WSROOT missig. MUST be set point to the root of the build workspace.");
-                let wsroot = CWD.to_owned();
-                wsroot
             },
         };
         // debug(format_args!("WSROOT: {}\n", rv.as_str()));
         rv
     };
 
+    pub static ref WSROOT_BASE : String = {
+        let mut x = WSROOT.to_owned();
+        x.push_str("/");
+        x
+    };
+
     pub static ref CONFIG : Config = {
+        event!(Level::INFO, "Config Reading....");
         let rv : Result<Config,String> = utils::read_config(WSROOT.as_str(), "wisktrack.ini");
-        match rv {
+        let x = match rv {
             Ok(config) => { config }
             Err(e) => {
                 errorexit!("WISK_ERROR: Cannnot find wisktrack.ini under project. Reading Default.\nError: {}", e);
@@ -177,7 +187,9 @@ lazy_static! {
                     }
                 }
             }
-        }
+        };
+        event!(Level::INFO, "CONFIG Reading....Done");
+        x
     };
 
     pub static ref WISKTRACK:String = {
@@ -305,9 +317,10 @@ pub fn initialize_statics() {
     // one of the intercepted API gets called from the main program.
     // This is to avoid doing complex operations inside the library constructor
     // and keep the initialization limited to essentials.
-    // lazy_static::initialize(&TEMPLATEMAP);
+    lazy_static::initialize(&TEMPLATEMAP);
     // lazy_static::initialize(&CONFIG);
     // lazy_static::initialize(&APP64BITONLY_PATTERNS);
+    lazy_static::initialize(&TRACKER);
 }
 
 pub fn render(field: &str, vals: &HashMap<&str, &str>) -> String {
@@ -336,24 +349,25 @@ unsafe fn pathget(ipath: *const libc::c_char) -> String {
 
 unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
     let mut ipath = pathget(ipath);
+    // eprintln!("WSROOT_BASE: {}", WSROOT_BASE.as_str());
     if ipath.starts_with("/") {
-        crate::path::normalize(ipath.as_str())
+        crate::path::normalize(ipath.as_str()).replace(WSROOT_BASE.as_str(), "")
     } else {
         if (fd == AT_FDCWD || fd < 0) {
             if let Ok(cwd) = env::current_dir() {
                 let mut x=cwd.to_str().unwrap().to_owned();
                 x.push_str("/");
                 x.push_str(ipath.as_str());
-                crate::path::normalize(x.as_str())
+                crate::path::normalize(x.as_str()).replace(WSROOT_BASE.as_str(), "")
             } else {
                 ipath.insert_str(0,"<UNKNOWNPATH>/");
-                crate::path::normalize(ipath.as_str())
+                crate::path::normalize(ipath.as_str()).replace(WSROOT_BASE.as_str(), "")
             }
         } else {
             let mut p = crate::path::fd_to_pathstr(fd);
             p.push_str("/");
             p.push_str(ipath.as_str());
-            crate::path::normalize(p.as_str())
+            crate::path::normalize(p.as_str()).replace(WSROOT_BASE.as_str(), "")
         }
     }
 }
@@ -380,7 +394,7 @@ impl Tracker {
                 // file :  unsafe { FromRawFd::from_raw_fd(fd) },
                 fd : fd,
             };
-            // debug(format_args!("Tracker Initializer: {}\n",tracker.fd));
+            event!(Level::INFO, "Tracker Initializer: {}\n",tracker.fd);
             // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
             // debug(format_args!("Tracker File: {:?}\n", tracker.file));
             // debug(format_args!("Tracker Initializer: Done\n"));
@@ -394,14 +408,16 @@ impl Tracker {
         // debug(format_args!("Tracker Initializer\n"));
         event!(Level::INFO, "Tracker Initialization:\n");
         setdebugmode!("program_start");
-        // debug(format_args!("Tracker File: {:?}\n{}\n", self.file, serde_json::to_string(&CMDLINE.to_vec()).unwrap()));
+        event!(Level::INFO, "Tracker File: {:?}\n{}\n", self.file, serde_json::to_string(&CMDLINE.to_vec()).unwrap());
 
-        (&self.file).write_all(format!("{} CALLS {}\n", &PUUID.as_str(), serde_json::to_string(&UUID.as_str()).unwrap()).as_bytes()).unwrap();
+        let pcw = (("UUID", &UUID.to_owned()), ("PID", &PID.to_owned()), ("CWD", &CWD.to_owned()), ("WSROOT", &WSROOT.to_owned()));
+        (&self.file).write_all(format!("{} CALLS {}\n", PUUID.as_str(), serde_json::to_string(&pcw).unwrap()).as_bytes()).unwrap();
+        // (&self.file).write_all(format!("{} CALLS {}\n", &PUUID.as_str(), serde_json::to_string(&UUID.as_str()).unwrap()).as_bytes()).unwrap();
         (&self.file).write_all(format!("{} CMDLINE {}\n", &UUID.as_str(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()).as_bytes()).unwrap();
         (&self.file).write_all(format!("{} WISKENV {}\n", &UUID.as_str(), serde_json::to_string(&ENV.to_owned()).unwrap()).as_bytes()).unwrap();
-        (&self.file).write_all(format!("{} PID {}\n", UUID.as_str(), serde_json::to_string(&PID.to_owned()).unwrap()).as_bytes()).unwrap();
-        (&self.file).write_all(format!("{} CWD {}\n", UUID.as_str(), serde_json::to_string(&CWD.to_owned()).unwrap()).as_bytes()).unwrap();
-        (&self.file).write_all(format!("{} WSROOT {}\n", UUID.as_str(), serde_json::to_string(&WSROOT.to_owned()).unwrap()).as_bytes()).unwrap();
+        // (&self.file).write_all(format!("{} PID {}\n", UUID.as_str(), serde_json::to_string(&PID.to_owned()).unwrap()).as_bytes()).unwrap();
+        // (&self.file).write_all(format!("{} CWD {}\n", UUID.as_str(), serde_json::to_string(&CWD.to_owned()).unwrap()).as_bytes()).unwrap();
+        // (&self.file).write_all(format!("{} WSROOT {}\n", UUID.as_str(), serde_json::to_string(&WSROOT.to_owned()).unwrap()).as_bytes()).unwrap();
         // event!(Level::INFO, "Tracker Initialization Complete: {} CALLS {}, WISKENV: {}, CMD: {}",
         //         tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap(), serde_json::to_string(&tracker.wiskfields).unwrap(),
         //         &tracker.cmdline.join(" "));

@@ -5,9 +5,9 @@ use std::{env, ptr};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use nix::fcntl::OFlag;
 use std::io::{Read, Write};
-use std::fmt;
+use std::{fmt, io};
 use std::error;
-use libc::{c_char,c_int, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
+use libc::{c_char,c_int, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open, SYS_close, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd, RawFd};
 use std::collections::{HashMap, BTreeMap};
 use std::path::{Path, PathBuf};
@@ -15,7 +15,7 @@ use std::fs::{File,read_to_string};
 use std::process;
 use uuid::Uuid;
 use nix::unistd::dup3;
-use tracing::{Level, event};
+use tracing::{Level};
 use redhook::debug;
 use serde::de;
 use regex::{RegexSet};
@@ -33,6 +33,13 @@ lazy_static! {
     pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
 
     pub static ref PID : String = process::id().to_string();
+}
+
+#[macro_export]
+macro_rules! event {
+    ($lvl:expr, $($arg:tt)*) => ({
+        // eprintln!($($arg)*);
+    })
 }
 
 #[macro_export]

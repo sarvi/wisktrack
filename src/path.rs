@@ -3,9 +3,10 @@ use std::{fs, fmt, error};
 use std::path::{Path, PathBuf};
 use std::cell::RefCell;
 use libc::{c_char,c_int, PATH_MAX, SYS_readlink};
-use tracing::{Level, event};
+use tracing::{Level};
 use redhook::debug;
 use regex::{RegexSet};
+
 
 pub fn readlink(link: &str) -> String {
     thread_local! {
@@ -74,16 +75,16 @@ pub fn normalize(p: &str) -> String {
 
 pub fn is_match(file: &str, patterns: &RegexSet, cwd: &str) -> bool {
     // debug(format_args!("Matching Patters: {} with {:#?}\n", file, patterns));
-    if !file.starts_with("/") {
+    if !file.starts_with("/") && !cwd.is_empty()  {
         let absfile = join(cwd,file);
         let file = normalize(absfile.as_str());
         let rv = patterns.is_match(file.as_str());
-        // debug(format_args!("Match: {}\n", rv));
+        // debug(format_args!("Match: {} {}\n", file, rv));
         rv
     } else {
         let file = normalize(file);
         let rv = patterns.is_match(file.as_str());
-        // debug(format_args!("Match: {}\n", rv));
+        // debug(format_args!("Match: {} {}\n", file, rv));
         rv
     }
 }
