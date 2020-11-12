@@ -5,13 +5,13 @@ use std::{env, ptr};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use nix::fcntl::OFlag;
 use std::io::{Read, Write};
-use std::{fmt, io};
+use std::{fmt, io, fs};
 use std::error;
-use libc::{c_char,c_int, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open, SYS_close, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
+use libc::{c_char,c_int, O_CREAT, O_WRONLY, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open, SYS_close, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd, RawFd};
 use std::collections::{HashMap, BTreeMap};
 use std::path::{Path, PathBuf};
-use std::fs::{File,read_to_string};
+use std::fs::{File,read_to_string, create_dir_all};
 use std::process;
 use uuid::Uuid;
 use nix::unistd::dup3;
@@ -20,26 +20,16 @@ use redhook::debug;
 use serde::de;
 use regex::{RegexSet};
 
-pub static WISKFD: AtomicUsize = AtomicUsize::new(800);
-
-lazy_static! {
-    pub static ref PUUID:String = {
-        match env::var("WISK_PUUID") {
-            Ok(uuid) => uuid,
-            Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
-        }
-    };
-
-    pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
-
-    pub static ref PID : String = process::id().to_string();
-}
-
 #[macro_export]
 macro_rules! event {
-    ($lvl:expr, $($arg:tt)*) => ({
+    ($lvl:expr, $form:tt, $($arg:tt)*) => ({
+        // WISKTRACE.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), $($arg)* ).as_bytes());
         // eprintln!($($arg)*);
-    })
+    });
+    ($lvl:expr, $form:tt) => ({
+        // WISKTRACE.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), ).as_bytes());
+        // eprintln!($($arg)*);
+    });
 }
 
 #[macro_export]
@@ -65,6 +55,85 @@ macro_rules! errormsg {
     ($msg:tt, $($arg:expr)*) => { format!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
                                                 $($arg),* , PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
 }
+
+
+pub static WISKFD: AtomicUsize = AtomicUsize::new(800);
+
+// pub struct Tracer {
+//     pub file: File,
+//     pub fd: i32,
+// }
+
+lazy_static! {
+    // pub static ref WISKTRACE:Tracer = Tracer::new();
+
+    pub static ref PUUID:String = {
+        match env::var("WISK_PUUID") {
+            Ok(uuid) => uuid,
+            Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
+        }
+    };
+
+    pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
+
+    pub static ref PID : String = process::id().to_string();
+}
+
+// impl Tracer {
+//     pub fn new() -> Tracer {
+//         // debug(format_args!("Tracer Initializer\n"));
+//         let mut fname:String = match env::var("WISK_TRACE") {
+//             Ok(v) =>  {
+//                 if v.is_empty() {
+//                     String::from("/dev/null")
+//                 } else {
+//                     v
+//                 }
+//             },
+//             Err(_) => {
+//                 // debug(format_args!("WISK_TRACK is missing\n"));
+//                 String::from("/dev/null")
+//             },
+//         };
+//         let p = Path::new(&fname);
+//         if !p.parent().unwrap().exists() {
+//             debug(format_args!("parent: {:?}", p.parent().unwrap()));
+//             create_dir_all(p.parent().unwrap()).unwrap();
+//         }
+//         // debug(format_args!("WISKTRACE: {}\n", fname.as_str()));
+//         // let f = internal_open(fname.as_str(), (O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC) as i32,
+//         //                       (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true).unwrap();
+//         // let fd = f.as_raw_fd();
+//         // let tracer = Tracer {
+//         //     file: f,
+//         //     fd: fd
+//         // };
+//         // debug(format_args!("Tracer: {:?} {}\n", tracer.file, tracer.fd));
+//         // tracer
+//         // if let Ok(f) = fs::OpenOptions::new().create(true).append(true).open(fname.as_str()) {
+//         if let Ok(f) = internal_open(fname.as_str(), (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE|O_CLOEXEC) as i32,
+//                                      (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true) {
+//             // let tempfd = f.into_raw_fd();
+//             // let fd = dup2(tempfd, TRACKERFD).unwrap();
+//             let fd = f.as_raw_fd();
+//             let tracer = Tracer {
+//                 file :  f,
+//                 // file :  unsafe { FromRawFd::from_raw_fd(fd) },
+//                 fd : fd,
+//             };
+//             // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
+//             // debug(format_args!("Tracer File: {:?}\n", tracer.file));
+//             // debug(format_args!("Tracker Initializer: Done\n"));
+//             tracer
+//         } else {
+//             errorexit!("Error opening track file: {}\n", fname.as_str());
+//         }
+//     }
+
+//     pub fn write_all(self: &Self, value: &[u8]) {
+//         (&self.file).write_all(value).unwrap();
+//     }
+// }
 
 pub unsafe fn ptr2str<'a>(ptr: *const c_char) -> &'a str {
     CStr::from_ptr(ptr).to_str().unwrap()
@@ -360,15 +429,16 @@ pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool) -> io
         return Err(io::Error::last_os_error());
     }
     let retfd = if relocfd {
-        let fd = dup3(tempfd as i32, fd, OFlag::from_bits(O_CLOEXEC|O_LARGEFILE|O_APPEND|O_CREAT).unwrap()).unwrap();
+        let fd = dup3(tempfd as i32, fd, OFlag::from_bits(O_CLOEXEC|flags).unwrap()).unwrap();
         unsafe { libc::syscall(SYS_close, tempfd) };
-        event!(Level::INFO, "File Descriptor(Relocated): {} {}\n", tempfd, fd);
+        // debug(format_args!("File Descriptor(Relocated): {} {}\n", tempfd, fd));
         fd
     } else {
-        event!(Level::INFO, "File Descriptor(Original): {}\n", tempfd);
+        // debug(format_args!("File Descriptor(Original): {}\n", tempfd));
         tempfd
     };
     let f:File = unsafe { FromRawFd::from_raw_fd(retfd as i32) };
+    // debug(format_args!("File {:?}\n", &f));
     // (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
     Ok(f)
 }

@@ -10,7 +10,8 @@ use std::io::{Error, Read, Write};
 use std::path::{Path, PathBuf};
 use std::string::String;
 use std::collections::HashMap;
-use libc::{c_char,c_int, O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC, AT_FDCWD, SYS_open};
+use libc::{c_char,c_int, O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_APPEND, O_LARGEFILE, O_CLOEXEC,
+           AT_FDCWD, SYS_open, S_IRUSR, S_IWUSR, S_IRGRP, S_IWGRP};
 use nix::unistd::dup2;
 // use serde::{Serialize, Deserialize};
 use base_62;
@@ -387,7 +388,9 @@ macro_rules! check_err {
 impl Tracker {
     pub fn new() -> Tracker {
         // debug(format_args!("Tracker Initializer\n"));
-        if let Ok(f) = fs::OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
+        if let Ok(f) = utils::internal_open(WISKTRACK.as_str(), (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE|O_CLOEXEC) as i32,
+                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true) {
+        // fs::OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
             // let tempfd = f.into_raw_fd();
             // let fd = dup2(tempfd, TRACKERFD).unwrap();
             let fd = f.as_raw_fd();
@@ -396,7 +399,7 @@ impl Tracker {
                 // file :  unsafe { FromRawFd::from_raw_fd(fd) },
                 fd : fd,
             };
-            event!(Level::INFO, "Tracker Initializer: {}\n",tracker.fd);
+            event!(Level::INFO, "Tracker Initializer: {}",tracker.fd);
             // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
             // debug(format_args!("Tracker File: {:?}\n", tracker.file));
             // debug(format_args!("Tracker Initializer: Done\n"));
@@ -408,9 +411,8 @@ impl Tracker {
 
     pub fn initialize(&self) {
         // debug(format_args!("Tracker Initializer\n"));
-        event!(Level::INFO, "Tracker Initialization:\n");
+        event!(Level::INFO, "Tracker Initialization:");
         setdebugmode!("program_start");
-        event!(Level::INFO, "Tracker File: {:?}\n{}\n", self.file, serde_json::to_string(&CMDLINE.to_vec()).unwrap());
 
         let pcw = (("UUID", &UUID.to_owned()), ("PID", &PID.to_owned()), ("CWD", &CWD.to_owned()), ("WSROOT", &WSROOT.to_owned()));
         (&self.file).write_all(format!("{} CALLS {}\n", PUUID.as_str(), serde_json::to_string(&pcw).unwrap()).as_bytes()).unwrap();
