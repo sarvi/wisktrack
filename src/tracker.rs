@@ -27,7 +27,7 @@ use regex::{RegexSet, escape};
 use crate::utils;
 use crate::{errorexit, event};
 use crate::path;
-use utils::{PUUID, UUID, PID};
+use utils::{WISKTRACKFD, WISKTRACEFD, PUUID, UUID, PID};
 
 pub const DEBUGMODE:bool = true;
 
@@ -388,8 +388,13 @@ macro_rules! check_err {
 impl Tracker {
     pub fn new() -> Tracker {
         // debug(format_args!("Tracker Initializer\n"));
-        if let Ok(f) = utils::internal_open(WISKTRACK.as_str(), (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE|O_CLOEXEC) as i32,
-                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true) {
+        let flags = if WISKTRACK.ends_with(".file") {
+            (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE)
+        } else {
+            (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE|O_CLOEXEC)
+        };
+        if let Ok(f) = utils::internal_open(WISKTRACK.as_str(), flags as i32,
+                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true, WISKTRACKFD) {
         // fs::OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
             // let tempfd = f.into_raw_fd();
             // let fd = dup2(tempfd, TRACKERFD).unwrap();

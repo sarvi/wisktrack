@@ -19,6 +19,7 @@ use tracing::{Level};
 use redhook::debug;
 use serde::de;
 use regex::{RegexSet};
+use crate::path;
 
 #[macro_export]
 macro_rules! event {
@@ -36,7 +37,7 @@ macro_rules! event {
 macro_rules! errorexit {
     ($msg:tt) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
                                        PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>() ); panic!() } };
-    ($msg:tt, $($arg:expr)*) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+    ($msg:tt, $($arg:expr),*) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
                                        $($arg),*, PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>() ); panic!() } };
 }
 
@@ -44,7 +45,7 @@ macro_rules! errorexit {
 macro_rules! wiskassert {
     ($cond:expr, $msg:tt) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
                                                 PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
-    ($cond:expr, $msg:tt, $($arg:expr)*) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+    ($cond:expr, $msg:tt, $($arg:expr),*) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
                                                 $($arg),* , PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
 }
 
@@ -52,12 +53,14 @@ macro_rules! wiskassert {
 macro_rules! errormsg {
     ($msg:tt) => { format!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
                                                 PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
-    ($msg:tt, $($arg:expr)*) => { format!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
+    ($msg:tt, $($arg:expr),*) => { format!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
                                                 $($arg),* , PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
 }
 
 
-pub static WISKFD: AtomicUsize = AtomicUsize::new(800);
+pub static WISKTRACKFD:i32 = 800;
+pub static WISKTRACEFD:i32 = 801;
+pub static WISKFD: AtomicUsize = AtomicUsize::new((WISKTRACEFD as usize)+1);
 
 // pub struct Tracer {
 //     pub file: File,
@@ -418,8 +421,19 @@ pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
 // }
 
 
-pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool) -> io::Result<File> {
-    let fd = WISKFD.fetch_add(1, Ordering::Relaxed) as i32;
+pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool, specificfd: i32) -> io::Result<File> {
+    let fd = if specificfd >= 0 {
+        let eflags = unsafe { libc::fcntl(specificfd, libc::F_GETFD) };
+        if eflags >= 0 {
+            let f:File = unsafe { FromRawFd::from_raw_fd(specificfd as i32) };
+            let fname = path::fd_to_pathstr(specificfd);
+            wiskassert!(fname==filename, "Specific {} maps to {} instead of {}", specificfd, fname, filename);
+            return Ok(f)
+        }
+        specificfd
+    } else {
+        WISKFD.fetch_add(1, Ordering::Relaxed) as i32
+    };
     let filename = CString::new(filename).unwrap();
     let tempfd = unsafe {
         libc::syscall(SYS_open, filename.as_ptr(), flags, mode)
@@ -429,7 +443,7 @@ pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool) -> io
         return Err(io::Error::last_os_error());
     }
     let retfd = if relocfd {
-        let fd = dup3(tempfd as i32, fd, OFlag::from_bits(O_CLOEXEC|flags).unwrap()).unwrap();
+        let fd = dup3(tempfd as i32, fd, OFlag::from_bits(flags).unwrap()).unwrap();
         unsafe { libc::syscall(SYS_close, tempfd) };
         // debug(format_args!("File Descriptor(Relocated): {} {}\n", tempfd, fd));
         fd
@@ -463,7 +477,7 @@ where
         |e| format!("Error finding {} path: {:?}", e.to_string(), cfgpath)
     )?;
     let cfgpathstr = cfgpath.to_str().unwrap();
-    let mut file = internal_open(cfgpathstr, 0,0, false).map_err(
+    let mut file = internal_open(cfgpathstr, 0,0, false, -1).map_err(
             |e| format!("Error opening {} path: {}", e.to_string(), cfgpathstr)
         )?;
     // let mut file = File::open(cfgpath.to_owned()).map_err(
