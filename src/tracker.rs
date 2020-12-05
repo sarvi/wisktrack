@@ -422,8 +422,10 @@ impl Tracker {
         let pcw = (("UUID", &UUID.to_owned()), ("PID", &PID.to_owned()), ("CWD", &CWD.to_owned()), ("WSROOT", &WSROOT.to_owned()));
         (&self.file).write_all(format!("{} CALLS {}\n", PUUID.as_str(), serde_json::to_string(&pcw).unwrap()).as_bytes()).unwrap();
         // (&self.file).write_all(format!("{} CALLS {}\n", &PUUID.as_str(), serde_json::to_string(&UUID.as_str()).unwrap()).as_bytes()).unwrap();
-        (&self.file).write_all(format!("{} CMDLINE {}\n", &UUID.as_str(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()).as_bytes()).unwrap();
-        (&self.file).write_all(format!("{} WISKENV {}\n", &UUID.as_str(), serde_json::to_string(&ENV.to_owned()).unwrap()).as_bytes()).unwrap();
+        // (&self.file).write_all(format!("{} CMDLINE {}\n", &UUID.as_str(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()).as_bytes()).unwrap();
+        // (&self.file).write_all(format!("{} WISKENV {}\n", &UUID.as_str(), serde_json::to_string(&ENV.to_owned()).unwrap()).as_bytes()).unwrap();
+        self.report("CMDLINE", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+        self.report("WISKENV", &serde_json::to_string(&ENV.to_owned()).unwrap());
         // (&self.file).write_all(format!("{} PID {}\n", UUID.as_str(), serde_json::to_string(&PID.to_owned()).unwrap()).as_bytes()).unwrap();
         // (&self.file).write_all(format!("{} CWD {}\n", UUID.as_str(), serde_json::to_string(&CWD.to_owned()).unwrap()).as_bytes()).unwrap();
         // (&self.file).write_all(format!("{} WSROOT {}\n", UUID.as_str(), serde_json::to_string(&WSROOT.to_owned()).unwrap()).as_bytes()).unwrap();
@@ -445,6 +447,7 @@ impl Tracker {
         while lenleft != 0 {
             let max = if lenleft > availen {lenleft = lenleft - availen; ind + availen } 
                     else { let x=lenleft; lenleft = 0; ind + x };
+            contin = if lenleft > availen { "*" } else { " " };
             // println!("minlen={} valeft={} ind={} max={}\n{} {} {}", minlen, lenleft, ind, max,
             //         self.uuid, op, contin);
             // debug(format_args!("Tracker Write : {:?}", &self.file));
