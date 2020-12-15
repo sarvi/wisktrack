@@ -609,6 +609,10 @@ impl Tracker {
         self.report("EXECUTES", &serde_json::to_string(&args).unwrap());
     }
 
+    pub unsafe fn reportcoredumped(self: &Self, variant: &str, pid: libc::pid_t) {
+        let args = (variant.to_owned(), ("PID", &PID.to_owned()), ("UUID", &UUID.to_owned()), ("CRASHPID", pid));
+        self.report("COREDUMPED", &serde_json::to_string(&args).unwrap());
+    }
 }
 
 // thread_local! {

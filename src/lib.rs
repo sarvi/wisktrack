@@ -770,6 +770,68 @@ hook! {
     }
 }
 
+/* pid_t wait(int *status); */
+hook! {
+    unsafe fn wait(status: *const libc::c_int) -> libc::pid_t => (my_wait,-1,true) {
+        let localpid: libc::pid_t;
+        let localstatus: *const libc::c_int;
+        // setdebugmode!("wait");
+        if status.is_null() {
+            let stat: libc::c_int = 0;
+            localstatus = &stat;
+            localpid = real!(wait)(localstatus);
+        } else {
+            localstatus = status;
+            localpid = real!(wait)(localstatus);
+        }
+        if libc::WCOREDUMP(*localstatus) && localpid > 0 {
+            if initialized() {
+                TRACKER.reportcoredumped("wait", localpid);
+            }
+        }
+        localpid
+    }
+}
+
+
+/* pid_t waitpid(pid_t pid, int *status, int options); */
+hook! {
+    unsafe fn waitpid(pid: libc::pid_t, status: *const libc::c_int, options: libc::c_int) -> libc::pid_t => (my_waitpid,-1,true) {
+        let localpid: libc::pid_t;
+        let localstatus: *const libc::c_int;
+        // setdebugmode!("waitpid");
+        if status.is_null() {
+            let stat: libc::c_int = 0;
+            localstatus = &stat;
+            localpid = real!(waitpid)(pid, localstatus, options);
+        } else {
+            localstatus = status;
+            localpid = real!(waitpid)(pid, localstatus, options);
+        }
+        if libc::WCOREDUMP(*localstatus) && localpid > 0 {
+            if initialized() {
+                TRACKER.reportcoredumped("waitpid", localpid);
+            }
+        }
+        localpid
+    }
+}
+
+/* int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options); */
+hook! {
+    unsafe fn waitid(pid: libc::pid_t, id: libc::id_t, infop: *const libc::siginfo_t, options: libc::c_int) -> libc::c_int => (my_waitid,-1,true) {
+        let localpid: libc::pid_t;
+        let localstatus: *const libc::c_int;
+        // setdebugmode!("waitid");
+        localpid = real!(waitid)(pid, id, infop, options);
+        if libc::WCOREDUMP((*infop).si_status()) && localpid > 0 {
+            if initialized() {
+                TRACKER.reportcoredumped("waitid", localpid);
+            }
+        }
+        localpid
+    }
+}
 
 // vhook! {
 //     unsafe fn vprintf(args: std::ffi::VaList, format: *const c_char ) -> c_int => my_vprintf {

@@ -95,6 +95,9 @@ int main(int argc, char *argv[])
     } else if (strcmp(argv[1], "execle") == 0) {
         char *env[] = {"PATH=/nothing:", NULL};
         execle("/bin/ls", "ls", "-l", "/usr/bin/ls", NULL, env);
+    } else if (strcmp(argv[1], "segfault") == 0) {
+        int *intptr=NULL;
+        *(intptr) = 0xffff;
     } else {
         puts("Command: takes one argument. Which system call to run");
         puts("Options: readlink, vprintf, printf, open, fopen, creat");
