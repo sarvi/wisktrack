@@ -2,6 +2,7 @@
 use std::sync::Mutex;
 use std::ffi::{CStr, CString};
 use std::{env, ptr};
+use backtrace::Backtrace;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use nix::fcntl::OFlag;
 use std::io::{Read, Write};
@@ -25,20 +26,22 @@ use crate::path;
 macro_rules! event {
     ($lvl:expr, $form:tt, $($arg:tt)*) => ({
         // WISKTRACE.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), $($arg)* ).as_bytes());
-        // eprintln!($($arg)*);
+        // eprintln!(concat!("{}: ", $form), UUID.as_str(), $($arg)* );
     });
     ($lvl:expr, $form:tt) => ({
         // WISKTRACE.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), ).as_bytes());
-        // eprintln!($($arg)*);
+        // eprintln!(concat!("{}: ", $form), UUID.as_str(), );
     });
 }
 
 #[macro_export]
 macro_rules! errorexit {
-    ($msg:tt) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
-                                       PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>() ); panic!() } };
-    ($msg:tt, $($arg:expr),*) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
-                                       $($arg),*, PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>() ); panic!() } };
+    ($msg:tt) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {} Cmd: {:?}\nBacktrace:\n{:?}"),
+                                       PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>(),
+                                       Backtrace::new()); panic!() } };
+    ($msg:tt, $($arg:expr),*) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {} Cmd: {:?}\nBacktrace:\n{:?}"),
+                                       $($arg),*, PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>(),
+                                       Backtrace::new()); panic!() } };
 }
 
 #[macro_export]
@@ -71,13 +74,18 @@ lazy_static! {
     // pub static ref WISKTRACE:Tracer = Tracer::new();
 
     pub static ref PUUID:String = {
+        // event!(Level::INFO, "PUUID Initializing");
         match env::var("WISK_PUUID") {
             Ok(uuid) => uuid,
             Err(_) => String::from("XXXXXXXXXXXXXXXXXXXXXX")
         }
     };
 
-    pub static ref UUID : String = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
+    pub static ref UUID : String = {
+        let x = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
+        // eprintln!("{}: UUID Initializing", x);
+        x
+    };
 
     pub static ref PID : String = process::id().to_string();
 }
