@@ -1,5 +1,19 @@
 #!/bin/bash
 set -x
+tee2log() {
+    local log_path
+
+    [[ -n "${1:-}" ]] || { echo "Must supply log path" >&2; return 1; }
+    log_path="$1"
+
+    if [[ ! -f "$log_path" ]]; then
+        mkdir -p "$( dirname "$log_path" )"
+    fi
+
+    # tee to log
+    echo "exec > >( tee -a $log_path ) 2>&1" >&2
+    exec > >( tee -a "$log_path" ) 2>&1 || true
+}
 SCRIPT_DIR="$(cd "$(dirname $(realpath "${BASH_SOURCE[0]}"))" && pwd -P)"
 SCRIPT_DIR=$(realpath $SCRIPT_DIR)
 SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
@@ -8,6 +22,8 @@ SCRIPT=$(realpath $SCRIPT)
 WORKSPACE_DIR="$( pwd -P )"
 SCRIPT_SHORT_NAME="${SCRIPT_NAME%.*}"
 LIBRARY_PATH_BASE=$(realpath $SCRIPT_DIR/../)
+mkdir -p $WORKSPACE_DIR/logs
+tee2log $WORKSPACE_DIR/logs/cleanenv.log
 
 # echo "SCRIPT_DIR: $SCRIPT_DIR"
 # echo "LIBRARY_PATH_BASE: $LIBRARY_PATH_BASE"
@@ -17,6 +33,7 @@ WISK_WSROOT="$WORKSPACE_DIR"
 DODEBUG=false
 DOSTRACE=
 LD_DEBUG=
+DOSTAP=
 while true
 do
     if [[ $1 == -ld_debug* ]];  then
@@ -27,6 +44,15 @@ do
             LD_DEBUG=libs
         fi
         echo "LD_DEBUG: $LD_DEBUG"
+        shift
+    elif [[ $1 == -stap* ]];  then
+        echo "Option: $1"
+        if [[ $1 = -stap=* ]];  then
+            DOSTAP=${1##*-stap=}
+        else
+            DOSTAP=$LIBRARY_PATH_BASE/stap/default.stp
+        fi
+        echo "DOSTAP: $DOSTAP"
         shift
     elif [[ $1 == -trace* ]];  then
         echo "Option: $1"
@@ -75,7 +101,6 @@ WISK_TRACK=$WISK_WSROOT/wisktrack.file
 # WISK_TRACK=wisktrack.file
 WISK_TRACK=
 LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
-# LD_PRELOAD="$LIBRARY_PATH_BASE/lib64/libwisktrack.so"
 STRACEDIR="strace/"
 
 echo "WISK_WSROOT: $WISK_WSROOT"
@@ -104,8 +129,16 @@ if [[ "$SCRIPT_DIR/../config/wisktrack.ini.$OSTYPE" -nt "$WISK_WSROOT/wisk/confi
 fi
 echo "Starting....."
 
-if [[ -z $DOSTRACE ]]; then
-time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" "$@"
-else
+umask 000
+
+if [[ ! -z $DOSTRACE ]]; then
 time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -s 1024 -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" -E WISK_WSROOT="$WISK_WSROOT" "$@"
+elif [[ ! -z $DOSTAP ]]; then
+echo "env -i RUST_BACKTRACE=$RUST_BACKTRACE TERM=$TERM HOME=$HOME LD_PRELOAD=$LIBRARY_PATH_BASE/\\\${LIB}/libwisktrack.so PATH=$PATH USER=$USER WISK_TRACE=$WISK_TRACE WISK_TRACK=$WISK_TRACK WISK_CONFIG=$WISK_CONFIG WISK_WSROOT=$WISK_WSROOT stap -v $DOSTAP -d $LIBRARY_PATH_BASE/lib64/libwisktrack.so -d $LIBRARY_PATH_BASE/lib32/libwisktrack.so -c \"$@\" " >> tmpcmd.sh
+chmod +x tmpcmd.sh
+time sudo ./tmpcmd.sh
+# time sudo env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" stap -v $DOSTAP -d $LIBRARY_PATH_BASE/lib64/libwisktrack.so -d $LIBRARY_PATH_BASE/lib32/libwisktrack.so -c "$@"
+else
+time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" "$@"
 fi
+echo "Logfile: $WORKSPACE_DIR/logs/cleanenv.log"

@@ -1,0 +1,17 @@
+probe begin
+{
+print ("hello world\n")
+}
+
+probe syscall.open
+{
+printf ("%s(%d) open (%s)\n", execname(), pid(), argstr)
+print_usyms(ubacktrace())
+}
+
+probe syscall.close
+{
+printf ("%s(%d) close (%s)\n", execname(), pid(), argstr)
+print_usyms(ubacktrace())
+}
+
