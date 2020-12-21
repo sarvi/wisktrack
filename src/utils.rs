@@ -216,9 +216,14 @@ pub fn cpptr2hashmap(vecptr: *const *const libc::c_char) -> HashMap<String,Strin
         unsafe {
             let argptr: *const c_char = *(vecptr.offset(i));
             if argptr != ptr::null() {
-                let kv:Vec<&str> = CStr::from_ptr(argptr).to_str().unwrap().splitn(2,'=').collect();
-                let t = CStr::from_ptr(argptr).to_str().unwrap();
-                hash.insert(kv[0].to_string(), kv[1].to_string());
+                let argstr = CStr::from_ptr(argptr).to_string_lossy();
+                let kv:Vec<&str> = argstr.splitn(2,'=').collect();
+                let t = CStr::from_ptr(argptr).to_string_lossy();
+                if kv.len() == 2 {
+                    hash.insert(kv[0].to_string(), kv[1].to_string());
+                } else {
+                    hash.insert(kv[0].to_string(), "".to_string());
+                }
             } else {
                 break;
             }    
@@ -427,7 +432,6 @@ pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
 //         (file, argv, vec!(), env)
 //     }
 // }
-
 
 pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool, specificfd: i32) -> io::Result<File> {
     let fd = if specificfd >= 0 {

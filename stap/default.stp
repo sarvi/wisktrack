@@ -1,3 +1,5 @@
+# sudo stap -v /ws/sarvi-sjc/wisktrack/stap/default.stp -d /usr/lib64/ld-2.17.so -d /ws/sarvi-sjc/wisktrack/lib64/libwisktrack.so -c "ls -al "
+
 probe begin
 {
 print ("hello world\n")
