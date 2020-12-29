@@ -45,6 +45,8 @@ int main(int argc, char *argv[])
         testvprintf("Hello World! from vprintf: %d %f %s \n", 100, 1.23456, "something");
     } else if (strcmp(argv[1], "printf") == 0) {
         testprintf("Hello World! from printf: %d %f %s \n", 100, 1.23456, "something");
+    } else if (strcmp(argv[1], "close-800") == 0) {
+        close(800);
     } else if (strcmp(argv[1], "creat-cw") == 0) {
         close(open("/tmp/created.file", O_CREAT|O_WRONLY, 0));
     } else if (strcmp(argv[1], "creat-r") == 0) {

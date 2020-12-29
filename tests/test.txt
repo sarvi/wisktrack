@@ -2,3 +2,4 @@
 /ws/sarvi-sjc/wisktrack/scripts/cleanenv.sh -strace -os=iosxe -wsroot=/nobackup/sarvi/xewisktest  /auto/binos-tools/bin/make-4.2.1-p8 CBS2_MAKE=1 -C /nobackup/sarvi/xewisktest/vob/cisco.comp/BUILD_TREE/host-Linux onep/onep_thrift
 
 
+/auto/binos-tools/bin/make-4.2.1-p8 -C /nobackup/sarvi/xewisktest/vob/ios/sys/obj-x86_64_crb-ngwc TARGET=x86_64_cge7 x86_64_crb_linux_iosd_ngwc-universalk9-ms ioucon

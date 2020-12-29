@@ -5,15 +5,35 @@ probe begin
 print ("hello world\n")
 }
 
+probe syscall.vfork
+{
+printf ("%s(%d) vfork (%s)\n", execname(), pid(), argstr);
+print_usyms(ubacktrace())
+}
+
 probe syscall.open
 {
-printf ("%s(%d) open (%s)\n", execname(), pid(), argstr)
+printf ("%s(%d) open (%s)\n", execname(), pid(), argstr);
+print_usyms(ubacktrace())
+}
+
+probe syscall.dup2
+{
+printf ("%s(%d) dup2 (%s)\n", execname(), pid(), argstr);
 print_usyms(ubacktrace())
 }
 
 probe syscall.close
 {
-printf ("%s(%d) close (%s)\n", execname(), pid(), argstr)
+printf ("%s(%d) close (%s)\n", execname(), pid(), argstr);
 print_usyms(ubacktrace())
 }
+
+# probe kernel.function("filep_close")
+# {
+# printf("%s %d: %s(%s:%d)\n", execname(), pid(), ppfunc(),
+#         kernel_string($filp->f_path->dentry->d_iname),
+#         $filp->f_path->dentry->d_inode->i_ino);
+# print_usyms(ubacktrace())
+# }
 
