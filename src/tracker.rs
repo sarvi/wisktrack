@@ -1,6 +1,6 @@
 
 use std::mem;
-use std::sync::RwLock;
+use std::sync::{Once, RwLock};
 use std::{env, ptr, process, fs};
 use std::ffi::{CStr, CString, OsString};
 use std::os;
@@ -20,16 +20,20 @@ use tracing::dispatcher::{with_default, Dispatch};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing::{Level};
 // use redhook::ld_preload::make_dispatch;
-use redhook::debug;
+use redhook::{debug, initialized};
 use backtrace::Backtrace;
 use string_template::Template;
 use regex::{RegexSet, escape};
 use crate::utils;
-use crate::{errorexit, event};
+use crate::{errorexit, event, wiskassert};
 use crate::path;
-use utils::{WISKTRACKFD, WISKTRACEFD, PUUID, UUID, PID};
+use utils::{TRACKERFDS, WISKTRACKFD, WISKTRACEFD, WISKTRACE, PUUID, UUID, PID, TRACER};
 
 pub const DEBUGMODE:bool = true;
+
+pub static mut TRACKER_INITIALIZING: bool = false;
+
+pub static TRACKER_INIT_ONCE: Once = Once::new();
 
 #[macro_export]
 macro_rules! setdebugmode {
@@ -293,7 +297,7 @@ lazy_static! {
         } else {
             vec!("^NOMATCH/.*$".to_owned())
         };
-        event!(Level::INFO,"p: {:?}", p);
+        // event!(Level::INFO,"p: {:?}", p);
         let x = RegexSet::new(&p).unwrap_or_else(|e| {
             errorexit!("WISK_ERROR: Error compiling list of regex in app_64bitonly_match: {:?}", e);
         });
@@ -302,28 +306,68 @@ lazy_static! {
     };
 }
 
-pub fn initialize_statics() {
+pub fn initialize_constructor_statics() {
+    lazy_static::initialize(&TRACKERFDS);
     lazy_static::initialize(&ORIGINAL_ENV);
     lazy_static::initialize(&PUUID);
     lazy_static::initialize(&PID);
     lazy_static::initialize(&LD_PRELOAD);
     lazy_static::initialize(&CWD);
     lazy_static::initialize(&WSROOT);
+    lazy_static::initialize(&WSROOT_BASE);
     lazy_static::initialize(&UUID);
+    lazy_static::initialize(&WISKTRACE);
     lazy_static::initialize(&WISKTRACK);
     lazy_static::initialize(&WISKMAP);
     lazy_static::initialize(&ENV);
     lazy_static::initialize(&CMDLINE);
-    lazy_static::initialize(&TRACKER);
     lazy_static::initialize(&MAPFIELDS);
     // The following are to be initialized in the main program and will happen
     // one of the intercepted API gets called from the main program.
     // This is to avoid doing complex operations inside the library constructor
     // and keep the initialization limited to essentials.
     lazy_static::initialize(&TEMPLATEMAP);
-    // lazy_static::initialize(&CONFIG);
+    lazy_static::initialize(&CONFIG);
     // lazy_static::initialize(&APP64BITONLY_PATTERNS);
+    lazy_static::initialize(&TRACER);
     lazy_static::initialize(&TRACKER);
+    TRACKER.initialize();
+}
+
+pub fn initialize_main_statics() -> bool {
+    if !initialized() {
+        return false;
+    }
+    TRACKER_INIT_ONCE.call_once(|| {
+        unsafe { TRACKER_INITIALIZING = true; }
+        // lazy_static::initialize(&TRACKERFDS);
+        // lazy_static::initialize(&ORIGINAL_ENV);
+        // lazy_static::initialize(&PUUID);
+        // lazy_static::initialize(&PID);
+        // lazy_static::initialize(&LD_PRELOAD);
+        // lazy_static::initialize(&CWD);
+        // lazy_static::initialize(&WSROOT);
+        // lazy_static::initialize(&WSROOT_BASE);
+        // lazy_static::initialize(&UUID);
+        // lazy_static::initialize(&WISKTRACE);
+        // lazy_static::initialize(&WISKTRACK);
+        // lazy_static::initialize(&WISKMAP);
+        // lazy_static::initialize(&ENV);
+        // lazy_static::initialize(&CMDLINE);
+        // lazy_static::initialize(&MAPFIELDS);
+        // The following are to be initialized in the main program and will happen
+        // one of the intercepted API gets called from the main program.
+        // This is to avoid doing complex operations inside the library constructor
+        // and keep the initialization limited to essentials.
+        // lazy_static::initialize(&TRACER);
+        // lazy_static::initialize(&TEMPLATEMAP);
+        // lazy_static::initialize(&CONFIG);
+        // lazy_static::initialize(&APP64BITONLY_PATTERNS);
+        // lazy_static::initialize(&TRACKER);
+        // TRACKER.initialize();
+        unsafe { TRACKER_INITIALIZING = false; }
+    });
+    return true
 }
 
 pub fn render(field: &str, vals: &HashMap<&str, &str>) -> String {
@@ -393,7 +437,7 @@ impl Tracker {
         } else {
             (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE|O_CLOEXEC)
         };
-        if let Ok(f) = utils::internal_open(WISKTRACK.as_str(), flags as i32,
+        if let Ok(f) = utils::open(WISKTRACK.as_str(), flags as i32,
                                      (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true, WISKTRACKFD) {
         // fs::OpenOptions::new().create(true).append(true).open(&*WISKTRACK) {
             // let tempfd = f.into_raw_fd();
@@ -404,8 +448,9 @@ impl Tracker {
                 // file :  unsafe { FromRawFd::from_raw_fd(fd) },
                 fd : fd,
             };
-            event!(Level::INFO, "Tracker Initializer: {}",tracker.fd);
-            // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
+            TRACKERFDS.write().unwrap().push(tracker.fd);
+            event!(Level::INFO, "Tracker Create: FD={}",tracker.fd);
+            // let tracker = Tracker { file : utils::open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
             // debug(format_args!("Tracker File: {:?}\n", tracker.file));
             // debug(format_args!("Tracker Initializer: Done\n"));
             tracker
@@ -420,6 +465,7 @@ impl Tracker {
         setdebugmode!("program_start");
 
         let pcw = (("UUID", &UUID.to_owned()), ("PID", &PID.to_owned()), ("CWD", &CWD.to_owned()), ("WSROOT", &WSROOT.to_owned()));
+        event!(Level::INFO, "{} CALLS {}", PUUID.as_str(), serde_json::to_string(&pcw).unwrap());
         (&self.file).write_all(format!("{} CALLS {}\n", PUUID.as_str(), serde_json::to_string(&pcw).unwrap()).as_bytes()).unwrap();
         // (&self.file).write_all(format!("{} CALLS {}\n", &PUUID.as_str(), serde_json::to_string(&UUID.as_str()).unwrap()).as_bytes()).unwrap();
         // (&self.file).write_all(format!("{} CMDLINE {}\n", &UUID.as_str(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()).as_bytes()).unwrap();
@@ -433,6 +479,7 @@ impl Tracker {
         //         tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap(), serde_json::to_string(&tracker.wiskfields).unwrap(),
         //         &tracker.cmdline.join(" "));
         // debug(format_args!("Tracker Initializer Complete\n"));
+        event!(Level::INFO, "Tracker Initializer Complete");
     }
     
     pub fn report(self: &Self, op : &str, value: &str) {
@@ -443,6 +490,7 @@ impl Tracker {
         let mut contin = "";
         static mut REOPENCOUNT:i32 =0;
 
+        event!(Level::INFO, "op={} value={}", op, value);
         // println!("{} op={} value={}", self.uuid, op, value);
         while lenleft != 0 {
             let max = if lenleft > availen {lenleft = lenleft - availen; ind + availen } 

@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use std::ffi::{CStr, CString};
 use std::{env, ptr};
 use backtrace::Backtrace;
+use std::sync::{Once, RwLock};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use nix::fcntl::OFlag;
 use std::io::{Read, Write};
@@ -23,13 +24,26 @@ use regex::{RegexSet};
 use crate::path;
 
 #[macro_export]
+macro_rules! cevent {
+    ($lvl:expr, $form:tt, $($arg:tt)*) => ({
+        // TRACER.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), $($arg)* ).as_bytes());
+        // eprintln!(concat!("{}-{}: ", $form), UUID.as_str(), process::id(), $($arg)* );
+    });
+    ($lvl:expr, $form:tt) => ({
+        // TRACER.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), ).as_bytes());
+        // eprintln!(concat!("{}-{}: ", $form), UUID.as_str(), process::id() );
+    });
+}
+
+
+#[macro_export]
 macro_rules! event {
     ($lvl:expr, $form:tt, $($arg:tt)*) => ({
-        // WISKTRACE.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), $($arg)* ).as_bytes());
+        // TRACER.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), $($arg)* ).as_bytes());
         // eprintln!(concat!("{}: ", $form), UUID.as_str(), $($arg)* );
     });
     ($lvl:expr, $form:tt) => ({
-        // WISKTRACE.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), ).as_bytes());
+        // TRACER.write_all(format!(concat!("{}: ", $form, "\n"), UUID.as_str(), ).as_bytes());
         // eprintln!(concat!("{}: ", $form), UUID.as_str(), );
     });
 }
@@ -46,10 +60,10 @@ macro_rules! errorexit {
 
 #[macro_export]
 macro_rules! wiskassert {
-    ($cond:expr, $msg:tt) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
-                                                PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
-    ($cond:expr, $msg:tt, $($arg:expr),*) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}"),
-                                                $($arg),* , PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>()) };
+    ($cond:expr, $msg:tt) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}\n{:?}"),
+                                                PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>(), Backtrace::new()) };
+    ($cond:expr, $msg:tt, $($arg:expr),*) => { assert!($cond, concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {}Cmd: {:?}\n{:?}"),
+                                                $($arg),* , PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>(), Backtrace::new()) };
 }
 
 #[macro_export]
@@ -65,13 +79,32 @@ pub static WISKTRACKFD:i32 = 800;
 pub static WISKTRACEFD:i32 = 801;
 pub static WISKFD: AtomicUsize = AtomicUsize::new((WISKTRACEFD as usize)+1);
 
-// pub struct Tracer {
-//     pub file: File,
-//     pub fd: i32,
-// }
+pub struct Tracer {
+    pub file: File,
+    pub fd: i32,
+}
 
 lazy_static! {
-    // pub static ref WISKTRACE:Tracer = Tracer::new();
+    pub static ref TRACKERFDS: RwLock<Vec<c_int>> = RwLock::new(vec![]);
+
+    pub static ref WISKTRACE:String = {
+        let mut fname:String = match env::var("WISK_TRACE") {
+            Ok(v) =>  {
+                if v.is_empty() {
+                    "/dev/null".to_owned()
+                } else {
+                    v
+                }
+            },
+            Err(_) => {
+                // cevent!(Level::INFO, "WISK_TRACE is missing\n");
+                "/dev/null".to_owned()
+            },
+        };
+        fname
+    };
+
+    pub static ref TRACER:Tracer = Tracer::new();
 
     pub static ref PUUID:String = {
         // event!(Level::INFO, "PUUID Initializing");
@@ -82,6 +115,7 @@ lazy_static! {
     };
 
     pub static ref UUID : String = {
+        // eprintln!("UUID Initializing");
         let x = format!("{}", base_62::encode(Uuid::new_v4().as_bytes()));
         // eprintln!("{}: UUID Initializing", x);
         x
@@ -90,61 +124,34 @@ lazy_static! {
     pub static ref PID : String = process::id().to_string();
 }
 
-// impl Tracer {
-//     pub fn new() -> Tracer {
-//         // debug(format_args!("Tracer Initializer\n"));
-//         let mut fname:String = match env::var("WISK_TRACE") {
-//             Ok(v) =>  {
-//                 if v.is_empty() {
-//                     String::from("/dev/null")
-//                 } else {
-//                     v
-//                 }
-//             },
-//             Err(_) => {
-//                 // debug(format_args!("WISK_TRACK is missing\n"));
-//                 String::from("/dev/null")
-//             },
-//         };
-//         let p = Path::new(&fname);
-//         if !p.parent().unwrap().exists() {
-//             debug(format_args!("parent: {:?}", p.parent().unwrap()));
-//             create_dir_all(p.parent().unwrap()).unwrap();
-//         }
-//         // debug(format_args!("WISKTRACE: {}\n", fname.as_str()));
-//         // let f = internal_open(fname.as_str(), (O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC) as i32,
-//         //                       (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true).unwrap();
-//         // let fd = f.as_raw_fd();
-//         // let tracer = Tracer {
-//         //     file: f,
-//         //     fd: fd
-//         // };
-//         // debug(format_args!("Tracer: {:?} {}\n", tracer.file, tracer.fd));
-//         // tracer
-//         // if let Ok(f) = fs::OpenOptions::new().create(true).append(true).open(fname.as_str()) {
-//         if let Ok(f) = internal_open(fname.as_str(), (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE|O_CLOEXEC) as i32,
-//                                      (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true) {
-//             // let tempfd = f.into_raw_fd();
-//             // let fd = dup2(tempfd, TRACKERFD).unwrap();
-//             let fd = f.as_raw_fd();
-//             let tracer = Tracer {
-//                 file :  f,
-//                 // file :  unsafe { FromRawFd::from_raw_fd(fd) },
-//                 fd : fd,
-//             };
-//             // let tracker = Tracker { file : utils::internal_open(&*WISKTRACK, O_CREAT|O_APPEND|O_LARGEFILE|O_CLOEXEC)};
-//             // debug(format_args!("Tracer File: {:?}\n", tracer.file));
-//             // debug(format_args!("Tracker Initializer: Done\n"));
-//             tracer
-//         } else {
-//             errorexit!("Error opening track file: {}\n", fname.as_str());
-//         }
-//     }
+impl Tracer {
+    pub fn new() -> Tracer {
+        cevent!(Level::INFO, "Tracer Initializer\n");
+        let p = Path::new(WISKTRACE.as_str());
+        if !p.parent().unwrap().exists() {
+            cevent!(Level::INFO, "parent: {:?}", p.parent().unwrap());
+            create_dir_all(p.parent().unwrap()).unwrap();
+        }
+        if let Ok(f) = open(WISKTRACE.as_str(), (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE) as i32,
+                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32, true, WISKTRACEFD) {
+            let fd = f.as_raw_fd();
+            let tracer = Tracer {
+                file :  f,
+                fd : fd,
+            };
+            TRACKERFDS.write().unwrap().push(tracer.fd);
+            // cevent!(Level::INFO, "Tracer Initializer: Done\n");
+            // tracer.write_all(format!("{}: Tracer Initializer: Done \n", UUID.as_str()).as_bytes());
+            tracer
+        } else {
+            errorexit!("Error opening track file: {}\n", WISKTRACE.as_str());
+        }
+    }
 
-//     pub fn write_all(self: &Self, value: &[u8]) {
-//         (&self.file).write_all(value).unwrap();
-//     }
-// }
+    pub fn write_all(self: &Self, value: &[u8]) {
+        (&self.file).write_all(value).unwrap();
+    }
+}
 
 pub unsafe fn ptr2str<'a>(ptr: *const c_char) -> &'a str {
     CStr::from_ptr(ptr).to_str().unwrap()
@@ -377,7 +384,7 @@ pub fn currentenvupdate(fields: &Vec<(String,String)>) {
 pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
     let mut wiskmap: Vec<(String,String)> = vec!();
     use std::env::VarError::NotPresent;
-    wiskassert!(env::var_os("LD_PRELOAD").unwrap().to_str().unwrap().matches("libwisktrack.so").count()==1,
+    wiskassert!(env::var_os("LD_PRELOAD").unwrap().to_str().unwrap().matches("${LIB}/libwisktrack.so").count()==1,
             "Incoming LD_PRELOAD is wrong. Should have libwisktrack.so as the last entry. Set to {}",
             env::var_os("LD_PRELOAD").unwrap().to_str().unwrap());
     for k in fields.iter() {
@@ -433,12 +440,17 @@ pub fn envextractwisk(fields: Vec<&str>) -> Vec<(String,String)> {
 //     }
 // }
 
-pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool, specificfd: i32) -> io::Result<File> {
+pub fn open(filename: &str, flags: i32, mode: i32, relocfd: bool, specificfd: i32) -> io::Result<File> {
+    // eprintln!("PID: {}, open FLAGS: {}, File: {}",
+    //           process::id(), flags, filename);
+    cevent!(Level::INFO, "open(filename={}, flags={}, mode={}, relocfd={}, specificfd={})",
+            filename, flags, mode, relocfd, specificfd);
     let fd = if specificfd >= 0 {
         let eflags = unsafe { libc::fcntl(specificfd, libc::F_GETFD) };
         if eflags >= 0 {
             let f:File = unsafe { FromRawFd::from_raw_fd(specificfd as i32) };
             let fname = path::fd_to_pathstr(specificfd);
+            cevent!(Level::INFO, "Inheriting FD: {}, FILE: {}\n", specificfd, fname);
             wiskassert!(fname==filename, "Specific {} maps to {} instead of {}", specificfd, fname, filename);
             return Ok(f)
         }
@@ -457,16 +469,34 @@ pub fn internal_open(filename: &str, flags: i32, mode: i32, relocfd: bool, speci
     let retfd = if relocfd {
         let fd = dup3(tempfd as i32, fd, OFlag::from_bits(flags).unwrap()).unwrap();
         unsafe { libc::syscall(SYS_close, tempfd) };
-        // debug(format_args!("File Descriptor(Relocated): {} {}\n", tempfd, fd));
+        cevent!(Level::INFO, "File Descriptor(Relocated): {} -> {}, File: {}\n",
+               tempfd, fd, filename.to_string_lossy());
         fd
     } else {
-        // debug(format_args!("File Descriptor(Original): {}\n", tempfd));
+        cevent!(Level::INFO, "File Descriptor(Original): {}, File: {}\n",
+               tempfd, filename.to_string_lossy());
         tempfd
     };
+    let eflags = unsafe { libc::fcntl(retfd, libc::F_GETFD) };
+    cevent!(Level::INFO, "open FD: {}, EFLAGS: {}", retfd, eflags);
+    if eflags < 0 {
+        errorexit!("Error Creating/Duping FD: {} returned eflasgs: {}, File: {}", retfd, eflags, filename.to_string_lossy());
+    }
+    if (eflags & O_CLOEXEC) != 0 {
+        errorexit!("Error O_CLOEXEC FD: {} returned eflasgs: {}, File: {}", retfd, eflags, filename.to_string_lossy());
+    }
     let f:File = unsafe { FromRawFd::from_raw_fd(retfd as i32) };
     // debug(format_args!("File {:?}\n", &f));
     // (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
     Ok(f)
+}
+
+pub fn write(fd: usize, buf: &[u8]) -> Result<usize, &'static str> {
+    let x = unsafe { libc::syscall(libc::SYS_write, fd, buf.as_ptr() as usize, buf.len()) };
+    if x < 0 {
+        return Err("Error Writing to FD");
+    }
+    Ok(x as usize)
 }
 
 pub fn read_config<T>(basepath: &str, conf: &str) -> Result<T, String>
@@ -489,7 +519,7 @@ where
         |e| format!("Error finding {} path: {:?}", e.to_string(), cfgpath)
     )?;
     let cfgpathstr = cfgpath.to_str().unwrap();
-    let mut file = internal_open(cfgpathstr, 0,0, false, -1).map_err(
+    let mut file = open(cfgpathstr, O_CLOEXEC,0, false, -1).map_err(
             |e| format!("Error opening {} path: {}", e.to_string(), cfgpathstr)
         )?;
     // let mut file = File::open(cfgpath.to_owned()).map_err(
@@ -499,6 +529,7 @@ where
     let size = file.read_to_string(&mut content).map_err(
         |e| format!("Error reading {} path: {:?}", e.to_string(), cfgpath)
     )?;
+    unsafe { libc::syscall(SYS_close, file.into_raw_fd()) };
     serde_yaml::from_str(content.as_str()).map_err(
         |e| format!("Error parsing {} path: {:?}", e.to_string(), cfgpath)
     )
@@ -595,7 +626,7 @@ mod env_tests {
 
     // #[test]
     // fn test_internalopen_1() -> io::Result<()> {
-    //     let f = internal_open("/tmp/test1", O_CREAT);
+    //     let f = open("/tmp/test1", O_CREAT);
     //     (&f).write_all(format!("Something new\n").as_bytes()).unwrap();
     //     Ok(())
     // }

@@ -32,6 +32,8 @@ use core::cell::Cell;
 use ctor::{ctor, dtor};
 use std::sync::atomic;
 use paste::paste;
+use std::process;
+use std::fs;
 use tracing::{Level };
 use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open, SYS_close, INT_MAX};
 use nix::unistd::dup2;
@@ -40,16 +42,17 @@ use tracing::dispatcher::with_default;
 use redhook::{debug, initialized};
 use backtrace::Backtrace;
 use std::io::{Error, Read, Result, Write};
+use std::os::unix::io::FromRawFd;
 use errno::{Errno, errno, set_errno};
-use utils::{ WISKFD, PUUID, UUID};
+use utils::{ TRACKERFDS, WISKFD, PUUID, UUID, TRACER};
 use tracker::{TRACKERFD, WISKMAP, TRACKER, DEBUGMODE, CMDLINE,
-              APP64BITONLY_PATTERNS};
+              APP64BITONLY_PATTERNS, TRACKER_INIT_ONCE, TRACKER_INITIALIZING};
 
 hook! {
     unsafe fn readlink(path: *const libc::c_char, buf: *mut libc::c_char, bufsiz: libc::size_t) -> libc::ssize_t => (my_readlink,SYS_readlink, true) {
+        tracker::initialize_main_statics();
         setdebugmode!("readlink");
-        if initialized() {
-            event!(Level::INFO, "readlink({}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportreadlink(path);
         }
         real!(readlink)(path, buf, bufsiz)
@@ -59,9 +62,9 @@ hook! {
 /* int creat(const char *pathname, mode_t mode); */
 hook! {
     unsafe fn creat(pathname: *const libc::c_char, mode: libc::mode_t) -> c_int => (my_creat,-1,true) {
+        tracker::initialize_main_statics();
         setdebugmode!("creat");
-        if initialized() {
-            event!(Level::INFO, "creat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportcreat(pathname, mode);
         }
         real!(creat)(pathname, mode)
@@ -70,15 +73,16 @@ hook! {
 
 hook! {
     unsafe fn fopen(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen,-1,true) {
+        tracker::initialize_main_statics();
         setdebugmode!("fopen");
-        if !initialized() {
+        if !TRACKER_INIT_ONCE.is_completed() {
             setdebugmode!("fopen64");
             let f : *mut libc::FILE = real!(fopen)(name, mode) as *mut libc::FILE;
             let tempfd: c_int = libc::fileno(f);
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
                 let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                unsafe { libc::syscall(SYS_close, tempfd) };
+                libc::syscall(SYS_close, tempfd);
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
@@ -88,7 +92,6 @@ hook! {
                 f
             }
         } else {
-            event!(Level::INFO, "fopen({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
             TRACKER.reportfopen(name, mode);
             real!(fopen)(name, mode)
         }
@@ -99,14 +102,15 @@ hook! {
 #[cfg(target_arch = "x86_64")]
 hook! {
     unsafe fn fopen64(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen64,-1,true) {
-        if !initialized() {
+        tracker::initialize_main_statics();
+        if !TRACKER_INIT_ONCE.is_completed() {
             setdebugmode!("fopen64");
             let f : *mut libc::FILE = real!(fopen64)(name, mode) as *mut libc::FILE;
             let tempfd: c_int = libc::fileno(f);
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
                 let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                unsafe { libc::syscall(SYS_close, tempfd) };
+                libc::syscall(SYS_close, tempfd);
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
@@ -116,7 +120,6 @@ hook! {
                 f
             }
         } else {
-            event!(Level::INFO, "fopen64({}, {})", &UUID.as_str(), CStr::from_ptr(name).to_string_lossy());
             TRACKER.reportfopen(name, mode);
             real!(fopen64)(name, mode)
         }
@@ -127,8 +130,9 @@ hook! {
 /* typedef int (*__libc_open)(const char *pathname, int flags, ...); */
 dhook! {
     unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open,true) {
+        tracker::initialize_main_statics();
         setdebugmode!("open");
-        if !initialized() {
+        if !TRACKER_INIT_ONCE.is_completed() {
             let tempfd: c_int;
 
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
@@ -141,7 +145,7 @@ dhook! {
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
                 let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                unsafe { libc::syscall(SYS_close, tempfd) };
+                libc::syscall(SYS_close, tempfd);
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
@@ -154,11 +158,9 @@ dhook! {
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
-                event!(Level::INFO, "open({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
                 TRACKER.reportopen(pathname,flags,mode);
                 real!(open)(pathname, flags, mode)
             } else {
-                event!(Level::INFO, "open({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
                 TRACKER.reportopen(pathname,flags,0);
                 real!(open)(pathname, flags)
             }
@@ -173,7 +175,8 @@ dhook! {
 #[cfg(target_arch = "x86_64")]
 dhook! {
     unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open64, true) {
-        if !initialized() {
+        tracker::initialize_main_statics();
+        if !TRACKER_INIT_ONCE.is_completed() {
             let tempfd: c_int;
 
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
@@ -186,7 +189,7 @@ dhook! {
             if tempfd >= 0 {
                 // debug(format_args!("open64() Duping FD: {}\n", tempfd));
                 let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                unsafe { libc::syscall(SYS_close, tempfd) };
+                libc::syscall(SYS_close, tempfd);
                 // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
                 // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
                 let flags = libc::fcntl(fd, libc::F_GETFD);
@@ -200,13 +203,9 @@ dhook! {
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
-                // debug(format_args!("open64({}, {:X}, {:X})\n", CStr::from_ptr(pathname).to_string_lossy(), flags, mode));
-                event!(Level::INFO, "open64({}, {}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
                 TRACKER.reportopen(pathname,flags,mode);
                 real!(open64)(pathname, flags, mode)
             } else {
-                // debug(format_args!("open64({}, {}, {:X})\n", &UUID.as_str(),CStr::from_ptr(pathname).to_string_lossy(), flags));
-                event!(Level::INFO, "open64({}, {}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(), flags);
                 TRACKER.reportopen(pathname,flags,0);
                 real!(open64)(pathname, flags)
             }
@@ -224,17 +223,16 @@ hook! {
         // from a signal handler closing files and cleaning up a exited/forked process, while
         // the main thread is also in malloc.
         // setdebugmode!("close");
-        if fd != TRACKER.fd {
-            // debug(format_args!("close({})\n", fd));
-            if initialized() {
-                event!(Level::INFO, "close({}, {})", &UUID.as_str(), fd);
-            }
-            // TRACKER.reportclose(fd);
+        if TRACKERFDS.read().unwrap().iter().any(|&i| i==fd) {
+            0
+        } else if !TRACKER_INIT_ONCE.is_completed() {
             real!(close)(fd)
         } else {
-            // debug(format_args!("close({}) -----> Skipping\n", fd));
-            0
-        }
+            // debug(format_args!("close({})\n", fd));
+            // event!(Level::INFO, "close---({}, {})", &UUID.as_str(), fd);
+            // tracker::reportclose(fd);
+            real!(close)(fd)
+         }
     }
 }
 
@@ -245,12 +243,10 @@ hook! {
 //         if (flags & O_CREAT) == O_CREAT {
 //             let mut ap: std::ffi::VaListImpl = args.clone();
 //             let mode: c_int = ap.arg::<c_int>();
-//             event!(Level::INFO, "openat({}, {}, {}, {}, {})", &UUID.as_str(), dirfd, CStr::from_ptr(pathname).to_string_lossy(), flags, mode);
 //             TRACKER.reportopen(pathname,flags,mode);
 //             real!(openat)(dirfd, pathname, flags, mode)
 //         } else {
 //             setdebugmode!("openat");
-//             event!(Level::INFO, "openat({}, {}, {}, {})", &UUID.as_str(), dirfd, CStr::from_ptr(pathname).to_string_lossy(), flags);
 //             TRACKER.reportopen(pathname,flags,0);
 //             real!(openat)(dirfd, pathname, flags)
 //         }
@@ -379,7 +375,6 @@ fn execvpe_common (
  dhook! {
     unsafe fn execl(args: std::ffi::VaListImpl, path: *const c_char) -> c_int => my_execl {
         setdebugmode!("execl");
-        // debug(format_args!("execl({}):\n", CStr::from_ptr(path).to_string_lossy()));
         let mut ap: std::ffi::VaListImpl = args.clone();
         let mut vecptrs: Vec<_> =  vec!();
         while true {
@@ -391,15 +386,10 @@ fn execvpe_common (
             vecptrs.push(arg);
         }
         let argv = vecptrs.as_ptr();
-
-        event!(Level::INFO, "execl({}, {}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        // debug(format_args!("execv(): {:?}\n", env));
-        event!(Level::INFO,"execl: {}: Updated Env {:?}", &UUID.as_str(), env);
-
         TRACKER.reportexecvpe("execl", path, argv, &envcstr);
         execvpe_common(path, argv, envcstr, false)
     }
@@ -410,7 +400,6 @@ fn execvpe_common (
 dhook! {
     unsafe fn execlp(args: std::ffi::VaListImpl, file: *const c_char) -> c_int => my_execlp {
         setdebugmode!("execlp");
-        // debug(format_args!("execlp({}):\n", CStr::from_ptr(file).to_string_lossy()));
         let mut ap: std::ffi::VaListImpl = args.clone();
         let mut vecptrs: Vec<_> =  vec!();
         while true {
@@ -422,14 +411,10 @@ dhook! {
             vecptrs.push(arg);
         }
         let argv = vecptrs.as_ptr();
-        event!(Level::INFO, "execlp({}, {}, {})", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        // debug(format_args!("execv=lp(): {:?}\n", env));
-        event!(Level::INFO,"execlp: {}: Updated Env {:?}", &UUID.as_str(), env);
-
         TRACKER.reportexecvpe("execlp", file, argv, &envcstr);
         execvpe_common(file, argv, envcstr, true)
     }
@@ -440,7 +425,6 @@ dhook! {
 dhook! {
     unsafe fn execle(args: std::ffi::VaListImpl, path: *const c_char) -> c_int => my_execle {
         setdebugmode!("execle");
-        // debug(format_args!("execle({}):\n", CStr::from_ptr(path).to_string_lossy()));
         let mut ap: std::ffi::VaListImpl = args.clone();
         let mut vecptrs: Vec<_> =  vec!();
         while true {
@@ -457,11 +441,6 @@ dhook! {
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        // debug(format_args!("execle(): {:?}\n", env));
-        // event!(Level::INFO,"execle: {}: Updated Env {:?}", TRACKER.uuid, env);
-
-        event!(Level::INFO, "execle({}, {}, {})", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
-
         TRACKER.reportexecvpe("execle", path, argv, &envcstr);
         execvpe_common(path, argv, envcstr, false)
     }
@@ -473,15 +452,10 @@ dhook! {
  hook! {
     unsafe fn execv(path: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => (my_execv,-1,true) {
         setdebugmode!("execv");
-        // debug(format_args!("execv({}, {})\n", CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " ")));
-        event!(Level::INFO, "execv({}, {}, \"{}\"F)", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        // debug(format_args!("execv(): {:?}\n", env));
-        event!(Level::INFO,"execv: {}: Updated Env {:?}", &UUID.as_str(), env);
-
         TRACKER.reportexecvpe("execv", path, argv, &envcstr);
         execvpe_common(path, argv, envcstr, false)
     }
@@ -492,15 +466,10 @@ dhook! {
 hook! {
     unsafe fn execvp(file: *const libc::c_char, argv: *const *const libc::c_char) -> libc::c_int => (my_execvp,-1,true) {
         setdebugmode!("execvp");
-        // debug(format_args!("execvp({}, {}, {})\n", std::process::id(), CStr::from_ptr(file).to_string_lossy(),utils::cpptr2str(argv, ",")));
-        event!(Level::INFO, "execvp({}, {}, \"{}\"F)", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, ","));
         let mut env = utils::envgetcurrent();
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        // debug(format_args!("execvp: Updated Env {:?}", env));
-        event!(Level::INFO,"execvp: {}: Updated Env {:?}", &UUID.as_str(), env);
-
         TRACKER.reportexecvpe("execvp", file, argv, &envcstr);
         execvpe_common(file, argv, envcstr, true)
     }
@@ -512,15 +481,10 @@ hook! {
     unsafe fn execvpe(file: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_execvpe,-1,true) {
         setdebugmode!("execvpe");
-        // debug(format_args!("execvpe({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
-        event!(Level::INFO, "execvpe({}, {}, \"{}\")", UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        // debug(format_args!("execvpe(): {:?}\n", env));
-        // event!(Level::INFO,"execvpe: {}: Updated Env {:?}", TRACKER.uuid, env);
-
         TRACKER.reportexecvpe("execv", file, argv, &envcstr);
         execvpe_common(file, argv, envcstr, true)
     }
@@ -533,15 +497,10 @@ hook! {
     unsafe fn execve(pathname: *const libc::c_char,
                      argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_execve,-1,true) {
         setdebugmode!("execve");
-        // debug(format_args!("execve({}, {})\n", CStr::from_ptr(pathname).to_string_lossy(), utils::cpptr2str(argv, " ")));
-        event!(Level::INFO, "execve({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy(),utils::cpptr2str(argv, " "));
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        // debug(format_args!("execve(): {:?}\n", env));
-        event!(Level::INFO,"execve: {}: Updated Env {:?}", &UUID.as_str(), env);
-
         TRACKER.reportexecvpe("execve", pathname, argv, &envcstr);
         execvpe_common(pathname, argv, envcstr, false)
     }
@@ -554,14 +513,12 @@ hook! {
 //     unsafe fn execveat(dirfd: libc::c_int, pathname: *const libc::c_char,
 //                        argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_execveat,-1,true) {
 //         setdebugmode!("execveat");
-//         // event!(Level::INFO, "execveat({}, {}, \"{}\")", TRACKER.uuid, CStr::from_ptr(pathname).to_string_lossy(),utils::cpptr2str(argv, " "));
 //         // TRACKER.reportexecvpe(pathname, argv, envp);
 //         // TRACKER.reportexecveat(dirfd, pathname, argv, envp);
 //         let mut env = utils::cpptr2hashmap(envp);
 //         utils::envupdate(&mut env,&TRACKER.wiskfields);
 //         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
 //         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-//         // event!(Level::INFO,"execveat: {}: Updated Env {:?}", TRACKER.uuid, env);
 //         let mut envp = utils::vcstr2vecptr(&envcstr);
 //         envp.push(std::ptr::null());
 //         real!(execveat)(dirfd, pathname, argv, envp.as_ptr())
@@ -576,13 +533,10 @@ hook! {
     unsafe fn posix_spawn(pid: *mut libc::pid_t, path: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_posix_spawn,-1,true) {
         setdebugmode!("posix_spawn");
-        // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " ")));
-        event!(Level::INFO, "posix_spawnp({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(path).to_string_lossy(), utils::cpptr2str(argv, " "));
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        event!(Level::INFO,"posix_spawn: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         let ld_preload = envcstr[0].as_c_str().to_owned();
@@ -593,12 +547,9 @@ hook! {
         let pathstr = CStr::from_ptr(path);
         if path::is_match(pathstr.to_str().unwrap(), &APP64BITONLY_PATTERNS, "") {
             envp[0] = ld_preload_64bit.as_ptr();
-            // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
-            // TRACKER.report("APP64ONLY", &utils::cpptr2str(argvold, " "));
             utils::assert_ld_preload(&envp, true);
         } else {
             envp[0] = ld_preload.as_ptr();
-            // TRACKER.report("DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
             utils::assert_ld_preload(&envp, false);
         }
         utils::assert_execenv(&envp, &PUUID);
@@ -615,14 +566,11 @@ hook! {
     unsafe fn posix_spawnp(pid: *mut libc::pid_t, file: *const libc::c_char, file_actions: *const libc::posix_spawn_file_actions_t,
                            attrp: *const libc::posix_spawnattr_t, argv: *const *const libc::c_char, envp: *const *const libc::c_char) -> libc::c_int => (my_posix_spawnp,-1,true) {
         setdebugmode!("posix_spawnp");
-        // debug(format_args!("posix_spawnp({}, {})\n", CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " ")));
-        event!(Level::INFO, "posix_spawnp({}, {}, \"{}\")", &UUID.as_str(), CStr::from_ptr(file).to_string_lossy(), utils::cpptr2str(argv, " "));
 
         let mut env = utils::cpptr2hashmap(envp);
         utils::envupdate(&mut env,&WISKMAP);
         utils::hashmapassert(&env, vec!("LD_PRELOAD"));
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
-        event!(Level::INFO,"posix_spawnp: {}: Updated Env {:?}", &UUID.as_str(), env);
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
         TRACKER.reportexecvpe("posix_spawnp", file, argv, &envcstr);
@@ -636,8 +584,6 @@ hook! {
 hook! {
     unsafe fn popen(command: *const libc::c_char, ctype: *const libc::c_char) -> *const libc::FILE => (my_popen,-1,true) {
         setdebugmode!("popen");
-        // debug(format_args!("popen({}, {})\n", std::process::id(), CStr::from_ptr(command).to_string_lossy()));
-        event!(Level::INFO, "popen({}, {})", &UUID.as_str(), CStr::from_ptr(command).to_string_lossy());
         TRACKER.reportpopen(command, ctype);
         utils::currentenvupdate(&WISKMAP);
         let x = real!(popen)(command, ctype);
@@ -650,8 +596,6 @@ hook! {
 hook! {
     unsafe fn system(command: *const libc::c_char) -> libc::c_int => my_system {
         setdebugmode!("system");
-        // debug(format_args!("system({},{})\n", std::process::id(), CStr::from_ptr(command).to_string_lossy()));
-        event!(Level::INFO, "system({}, {})", &UUID.as_str(), CStr::from_ptr(command).to_string_lossy());
         TRACKER.reportsystem(command);
         utils::currentenvupdate(&WISKMAP);
         let x = real!(system)(command);
@@ -664,8 +608,7 @@ hook! {
 hook! {
     unsafe fn symlink(target: *const libc::c_char, linkpath: *const libc::c_char) -> libc::c_int => (my_symlink,-1,true) {
         setdebugmode!("symlink");
-        if initialized() {
-            event!(Level::INFO, "symlink({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(), CStr::from_ptr(linkpath).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportsymlink(target, linkpath);
         }
         real!(symlink)(target, linkpath)
@@ -676,8 +619,7 @@ hook! {
 hook! {
     unsafe fn symlinkat(target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) -> libc::c_int => (my_symlinkat,-1,true) {
         setdebugmode!("symlinkat");
-        if initialized() {
-            event!(Level::INFO, "symlinkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(target).to_string_lossy(),CStr::from_ptr(linkpath).to_string_lossy() );
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportsymlinkat(target, newdirfd, linkpath);
         }
         real!(symlinkat)(target, newdirfd, linkpath)
@@ -688,8 +630,7 @@ hook! {
 hook! {
     unsafe fn link(oldpath: *const libc::c_char, newpath: *const libc::c_char) -> libc::c_int => (my_link,-1,true) {
         setdebugmode!("link");
-        if initialized() {
-            event!(Level::INFO, "link({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportlink(oldpath, newpath);
         }
         real!(link)(oldpath, newpath)
@@ -701,8 +642,7 @@ hook! {
     unsafe fn linkat(olddirfd: libc::c_int, oldpath: *const libc::c_char,
                      newdirfd: libc::c_int, newpath: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_linkat,-1,true) {
         setdebugmode!("linkat");
-        if initialized() {
-            event!(Level::INFO, "linkat({}, {}, {})", &UUID.as_str(), CStr::from_ptr(oldpath).to_string_lossy(),CStr::from_ptr(newpath).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
         }
         real!(linkat)(olddirfd, oldpath, newdirfd, newpath, flags)
@@ -713,8 +653,7 @@ hook! {
 hook! {
     unsafe fn unlink(pathname: *const libc::c_char) -> libc::c_int => (my_unlink,-1,true) {
         setdebugmode!("unlink");
-        if initialized() {
-            event!(Level::INFO, "unlink({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportunlink(pathname);
         }
         real!(unlink)(pathname)
@@ -725,8 +664,7 @@ hook! {
 hook! {
     unsafe fn unlinkat(dirfd: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_unlinkat,-1,true) {
         setdebugmode!("unlinkat");
-        if initialized() {
-            event!(Level::INFO, "unlinkat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportunlinkat(dirfd, pathname, flags);
         }
         real!(unlinkat)(dirfd, pathname, flags)
@@ -737,10 +675,8 @@ hook! {
 hook! {
     unsafe fn chmod(pathname: *const libc::c_char, mode: libc::mode_t) -> libc::c_int => (my_chmod,-1,true) {
         setdebugmode!("chmod");
-        if initialized() {
-            event!(Level::INFO, "chmod({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportchmod(pathname, mode);
-            // debug(format_args!("chmod({})", CStr::from_ptr(pathname).to_string_lossy()));
         }
         real!(chmod)(pathname, mode)
     }
@@ -750,8 +686,7 @@ hook! {
 hook! {
     unsafe fn fchmod(fd: libc::c_int, mode: libc::mode_t) -> libc::c_int => (my_fchmod,-1,true) {
         setdebugmode!("fchmod");
-        if initialized() {
-            event!(Level::INFO, "fchmod({})", &UUID.as_str());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportfchmod(fd, mode);
         }
         real!(fchmod)(fd, mode)
@@ -762,76 +697,75 @@ hook! {
 hook! {
     unsafe fn fchmodat(dirfd: libc::c_int, pathname: *const libc::c_char, mode: libc::mode_t, flags: libc::c_int) -> libc::c_int => (my_fchmodat,-1,true) {
         setdebugmode!("fchmodat");
-        if initialized() {
-            event!(Level::INFO, "fchmodat({}, {})", &UUID.as_str(), CStr::from_ptr(pathname).to_string_lossy());
+        if TRACKER_INIT_ONCE.is_completed() {
             TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
         }
         real!(fchmodat)(dirfd, pathname, mode, flags)
     }
 }
 
-/* pid_t wait(int *status); */
-hook! {
-    unsafe fn wait(status: *const libc::c_int) -> libc::pid_t => (my_wait,-1,true) {
-        let localpid: libc::pid_t;
-        let localstatus: *const libc::c_int;
-        // setdebugmode!("wait");
-        if status.is_null() {
-            let stat: libc::c_int = 0;
-            localstatus = &stat;
-            localpid = real!(wait)(localstatus);
-        } else {
-            localstatus = status;
-            localpid = real!(wait)(localstatus);
-        }
-        if libc::WCOREDUMP(*localstatus) && localpid > 0 {
-            if initialized() {
-                TRACKER.reportcoredumped("wait", localpid);
-            }
-        }
-        localpid
-    }
-}
+// /* pid_t wait(int *status); */
+// hook! {
+//     unsafe fn wait(status: *const libc::c_int) -> libc::pid_t => (my_wait,-1,true) {
+//         let localpid: libc::pid_t;
+//         let localstatus: *const libc::c_int;
+//         // setdebugmode!("wait");
+//         if status.is_null() {
+//             let stat: libc::c_int = 0;
+//             localstatus = &stat;
+//             localpid = real!(wait)(localstatus);
+//         } else {
+//             localstatus = status;
+//             localpid = real!(wait)(localstatus);
+//         }
+//         if libc::WCOREDUMP(*localstatus) && localpid > 0 {
+//             if TRACKER_INIT_ONCE.is_completed() {
+//                 TRACKER.reportcoredumped("wait", localpid);
+//             }
+//         }
+//         localpid
+//     }
+// }
 
 
-/* pid_t waitpid(pid_t pid, int *status, int options); */
-hook! {
-    unsafe fn waitpid(pid: libc::pid_t, status: *const libc::c_int, options: libc::c_int) -> libc::pid_t => (my_waitpid,-1,true) {
-        let localpid: libc::pid_t;
-        let localstatus: *const libc::c_int;
-        // setdebugmode!("waitpid");
-        if status.is_null() {
-            let stat: libc::c_int = 0;
-            localstatus = &stat;
-            localpid = real!(waitpid)(pid, localstatus, options);
-        } else {
-            localstatus = status;
-            localpid = real!(waitpid)(pid, localstatus, options);
-        }
-        if libc::WCOREDUMP(*localstatus) && localpid > 0 {
-            if initialized() {
-                TRACKER.reportcoredumped("waitpid", localpid);
-            }
-        }
-        localpid
-    }
-}
+// /* pid_t waitpid(pid_t pid, int *status, int options); */
+// hook! {
+//     unsafe fn waitpid(pid: libc::pid_t, status: *const libc::c_int, options: libc::c_int) -> libc::pid_t => (my_waitpid,-1,true) {
+//         let localpid: libc::pid_t;
+//         let localstatus: *const libc::c_int;
+//         // setdebugmode!("waitpid");
+//         if status.is_null() {
+//             let stat: libc::c_int = 0;
+//             localstatus = &stat;
+//             localpid = real!(waitpid)(pid, localstatus, options);
+//         } else {
+//             localstatus = status;
+//             localpid = real!(waitpid)(pid, localstatus, options);
+//         }
+//         if libc::WCOREDUMP(*localstatus) && localpid > 0 {
+//             if TRACKER_INIT_ONCE.is_completed() {
+//                 TRACKER.reportcoredumped("waitpid", localpid);
+//             }
+//         }
+//         localpid
+//     }
+// }
 
-/* int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options); */
-hook! {
-    unsafe fn waitid(pid: libc::pid_t, id: libc::id_t, infop: *const libc::siginfo_t, options: libc::c_int) -> libc::c_int => (my_waitid,-1,true) {
-        let localpid: libc::pid_t;
-        let localstatus: *const libc::c_int;
-        // setdebugmode!("waitid");
-        localpid = real!(waitid)(pid, id, infop, options);
-        if libc::WCOREDUMP((*infop).si_status()) && localpid > 0 {
-            if initialized() {
-                TRACKER.reportcoredumped("waitid", localpid);
-            }
-        }
-        localpid
-    }
-}
+// /* int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options); */
+// hook! {
+//     unsafe fn waitid(pid: libc::pid_t, id: libc::id_t, infop: *const libc::siginfo_t, options: libc::c_int) -> libc::c_int => (my_waitid,-1,true) {
+//         let localpid: libc::pid_t;
+//         let localstatus: *const libc::c_int;
+//         // setdebugmode!("waitid");
+//         localpid = real!(waitid)(pid, id, infop, options);
+//         if libc::WCOREDUMP((*infop).si_status()) && localpid > 0 {
+//             if TRACKER_INIT_ONCE.is_completed() {
+//                 TRACKER.reportcoredumped("waitid", localpid);
+//             }
+//         }
+//         localpid
+//     }
+// }
 
 // vhook! {
 //     unsafe fn vprintf(args: std::ffi::VaList, format: *const c_char ) -> c_int => my_vprintf {
@@ -884,23 +818,25 @@ fn dlsym_intialize() {
 #[cfg(not(test))]
 #[ctor]
 fn cfoo() {
-    event!(Level::INFO, "Constructor: {}\n", std::process::id());
-    event!(Level::INFO, "Incoming Environment: {:?}\n", env::vars_os().map(|(x,y)| x.to_str().unwrap().to_owned()).collect::<Vec<String>>());
+    // let x = format!("Hello World: {}\n", 1);
+    // utils::write(0, x.as_bytes()).unwrap();
+    // let mut f:fs::File = unsafe { FromRawFd::from_raw_fd(0) };
+    // f.write(x.as_bytes()).unwrap();
+    cevent!(Level::INFO, "Constructor: {}\n", std::process::id());
+    cevent!(Level::INFO, "Incoming Environment: {:?}\n", env::vars_os().map(|(x,y)| x.to_str().unwrap().to_owned()).collect::<Vec<String>>());
     dlsym_intialize();
-    // assert_ne!(&TRACKER.pid, "");
-    // MY_DISPATCH;
-    // MY_DISPATCH.with(|(tracing, my_dispatch, _guard)| { });
-    tracker::initialize_statics();
-    TRACKER.initialize();
+    tracker::initialize_constructor_statics();
+    // utils::write(0, x.as_bytes()).unwrap();
+    // tracker::initialize_main_statics();
     redhook::initialize();
-    event!(Level::INFO, "Constructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+    cevent!(Level::INFO, "Constructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
 }
 
 #[dtor]
 fn dfoo() {
-    event!(Level::INFO, "Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+    // cevent!(Level::INFO, "Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+    // tracker::initialize_main_statics();
     (&TRACKER.file).flush().unwrap();
-
 }
 
 
