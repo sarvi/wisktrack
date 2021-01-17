@@ -20,10 +20,14 @@ extern crate string_template;
 extern crate regex;
 extern crate errno;
 
-mod tracker;
 #[macro_use]
+mod debug;
+mod common;
+mod tracer;
+mod tracker;
 mod utils;
 mod path;
+mod fs;
 
 use std::{env, ptr};
 // use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER, DEBUGMODE};
@@ -33,7 +37,7 @@ use ctor::{ctor, dtor};
 use std::sync::atomic;
 use paste::paste;
 use std::process;
-use std::fs;
+// use std::fs;
 use tracing::{Level };
 use libc::{c_char,c_int,O_CREAT,O_TMPFILE,SYS_readlink, SYS_open, SYS_close, INT_MAX};
 use nix::unistd::dup2;
@@ -44,15 +48,14 @@ use backtrace::Backtrace;
 use std::io::{Error, Read, Result, Write};
 use std::os::unix::io::FromRawFd;
 use errno::{Errno, errno, set_errno};
-use utils::{ TRACKERFDS, WISKFD, PUUID, UUID, TRACER};
-use tracker::{TRACKERFD, WISKMAP, TRACKER, DEBUGMODE, CMDLINE,
-              APP64BITONLY_PATTERNS, TRACKER_INIT_ONCE, TRACKER_INITIALIZING};
+use common::{WISKFDS, WISKTRACKFD, WISKTRACEFD, WISKTRACE, PUUID, UUID, PID};
+use tracer::{TRACER};
+use tracker::{WISKMAP, TRACKER, DEBUGMODE, CMDLINE, APP64BITONLY_PATTERNS};
 
 hook! {
     unsafe fn readlink(path: *const libc::c_char, buf: *mut libc::c_char, bufsiz: libc::size_t) -> libc::ssize_t => (my_readlink,SYS_readlink, true) {
-        tracker::initialize_main_statics();
         setdebugmode!("readlink");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportreadlink(path);
         }
         real!(readlink)(path, buf, bufsiz)
@@ -62,9 +65,9 @@ hook! {
 /* int creat(const char *pathname, mode_t mode); */
 hook! {
     unsafe fn creat(pathname: *const libc::c_char, mode: libc::mode_t) -> c_int => (my_creat,-1,true) {
-        tracker::initialize_main_statics();
+
         setdebugmode!("creat");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportcreat(pathname, mode);
         }
         real!(creat)(pathname, mode)
@@ -73,24 +76,24 @@ hook! {
 
 hook! {
     unsafe fn fopen(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen,-1,true) {
-        tracker::initialize_main_statics();
+
         setdebugmode!("fopen");
-        if !TRACKER_INIT_ONCE.is_completed() {
+        if !initialized() {
             setdebugmode!("fopen64");
-            let f : *mut libc::FILE = real!(fopen)(name, mode) as *mut libc::FILE;
-            let tempfd: c_int = libc::fileno(f);
-            if tempfd >= 0 {
-                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                libc::syscall(SYS_close, tempfd);
-                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
-                let flags = libc::fcntl(fd, libc::F_GETFD);
-                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-                libc::fdopen(fd, mode)
-            } else {
-                f
-            }
+            real!(fopen)(name, mode)
+            // let tempfd: c_int = libc::fileno(f);
+            // if tempfd >= 0 {
+            //     // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+            //     let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+            //     libc::syscall(SYS_close, tempfd);
+            //     // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+            //     // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+            //     let flags = libc::fcntl(fd, libc::F_GETFD);
+            //     libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            //     libc::fdopen(fd, mode)
+            // } else {
+            //     f
+            // }
         } else {
             TRACKER.reportfopen(name, mode);
             real!(fopen)(name, mode)
@@ -102,23 +105,23 @@ hook! {
 #[cfg(target_arch = "x86_64")]
 hook! {
     unsafe fn fopen64(name: *const libc::c_char, mode: *const libc::c_char) -> *const libc::FILE => (my_fopen64,-1,true) {
-        tracker::initialize_main_statics();
-        if !TRACKER_INIT_ONCE.is_completed() {
+
+        if !initialized() {
             setdebugmode!("fopen64");
-            let f : *mut libc::FILE = real!(fopen64)(name, mode) as *mut libc::FILE;
-            let tempfd: c_int = libc::fileno(f);
-            if tempfd >= 0 {
-                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                libc::syscall(SYS_close, tempfd);
-                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
-                let flags = libc::fcntl(fd, libc::F_GETFD);
-                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-                libc::fdopen(fd, mode)
-            } else {
-                f
-            }
+            real!(fopen64)(name, mode)
+            // let tempfd: c_int = libc::fileno(f);
+            // if tempfd >= 0 {
+            //     // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+            //     let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+            //     libc::syscall(SYS_close, tempfd);
+            //     // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+            //     // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+            //     let flags = libc::fcntl(fd, libc::F_GETFD);
+            //     libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            //     libc::fdopen(fd, mode)
+            // } else {
+            //     f
+            // }
         } else {
             TRACKER.reportfopen(name, mode);
             real!(fopen64)(name, mode)
@@ -130,30 +133,30 @@ hook! {
 /* typedef int (*__libc_open)(const char *pathname, int flags, ...); */
 dhook! {
     unsafe fn open(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open,true) {
-        tracker::initialize_main_statics();
+
         setdebugmode!("open");
-        if !TRACKER_INIT_ONCE.is_completed() {
-            let tempfd: c_int;
+        if !initialized() {
+            // let tempfd: c_int;
 
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
-                tempfd =real!(open)(pathname, flags, mode);
+                real!(open)(pathname, flags, mode)
             } else {
-                tempfd = real!(open)(pathname, flags);
+                real!(open)(pathname, flags)
             }
-            if tempfd >= 0 {
-                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                libc::syscall(SYS_close, tempfd);
-                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
-                let flags = libc::fcntl(fd, libc::F_GETFD);
-                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-                fd
-            } else {
-                tempfd
-            }
+            // if tempfd >= 0 {
+            //     // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+            //     let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+            //     libc::syscall(SYS_close, tempfd);
+            //     // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+            //     // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+            //     let flags = libc::fcntl(fd, libc::F_GETFD);
+            //     libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            //     fd
+            // } else {
+            //     tempfd
+            // }
         } else {
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
@@ -175,29 +178,29 @@ dhook! {
 #[cfg(target_arch = "x86_64")]
 dhook! {
     unsafe fn open64(args: std::ffi::VaListImpl, pathname: *const c_char, flags: c_int ) -> c_int => (my_open64, true) {
-        tracker::initialize_main_statics();
-        if !TRACKER_INIT_ONCE.is_completed() {
+
+        if !initialized() {
             let tempfd: c_int;
 
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
-                tempfd = real!(open64)(pathname, flags, mode);
+                real!(open64)(pathname, flags, mode)
             } else {
-                tempfd = real!(open64)(pathname, flags);
+                real!(open64)(pathname, flags)
             }
-            if tempfd >= 0 {
-                // debug(format_args!("open64() Duping FD: {}\n", tempfd));
-                let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
-                libc::syscall(SYS_close, tempfd);
-                // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
-                // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
-                let flags = libc::fcntl(fd, libc::F_GETFD);
-                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
-                fd
-            } else {
-                tempfd
-            }
+            // if tempfd >= 0 {
+            //     // debug(format_args!("open64() Duping FD: {}\n", tempfd));
+            //     let fd = dup2(tempfd, WISKFD.fetch_add(1,atomic::Ordering::SeqCst) as i32).unwrap();
+            //     libc::syscall(SYS_close, tempfd);
+            //     // debug(format_args!("open64() Duping FD: {}  -> {}\n", tempfd, fd));
+            //     // Set the FD_CLOEXEC flag on our end of the pipe, but not the child end.
+            //     let flags = libc::fcntl(fd, libc::F_GETFD);
+            //     libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            //     fd
+            // } else {
+            //     tempfd
+            // }
         } else {
             setdebugmode!("open64");
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
@@ -223,9 +226,10 @@ hook! {
         // from a signal handler closing files and cleaning up a exited/forked process, while
         // the main thread is also in malloc.
         // setdebugmode!("close");
-        if TRACKERFDS.read().unwrap().iter().any(|&i| i==fd) {
+        // event!(Level::INFO, "close({})", fd);
+        if WISKFDS.read().unwrap().iter().any(|&i| i==fd) {
             0
-        } else if !TRACKER_INIT_ONCE.is_completed() {
+        } else if !initialized() {
             real!(close)(fd)
         } else {
             // debug(format_args!("close({})\n", fd));
@@ -608,7 +612,7 @@ hook! {
 hook! {
     unsafe fn symlink(target: *const libc::c_char, linkpath: *const libc::c_char) -> libc::c_int => (my_symlink,-1,true) {
         setdebugmode!("symlink");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportsymlink(target, linkpath);
         }
         real!(symlink)(target, linkpath)
@@ -619,7 +623,7 @@ hook! {
 hook! {
     unsafe fn symlinkat(target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) -> libc::c_int => (my_symlinkat,-1,true) {
         setdebugmode!("symlinkat");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportsymlinkat(target, newdirfd, linkpath);
         }
         real!(symlinkat)(target, newdirfd, linkpath)
@@ -630,7 +634,7 @@ hook! {
 hook! {
     unsafe fn link(oldpath: *const libc::c_char, newpath: *const libc::c_char) -> libc::c_int => (my_link,-1,true) {
         setdebugmode!("link");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportlink(oldpath, newpath);
         }
         real!(link)(oldpath, newpath)
@@ -642,7 +646,7 @@ hook! {
     unsafe fn linkat(olddirfd: libc::c_int, oldpath: *const libc::c_char,
                      newdirfd: libc::c_int, newpath: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_linkat,-1,true) {
         setdebugmode!("linkat");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportlinkat(olddirfd, oldpath, newdirfd, newpath, flags);
         }
         real!(linkat)(olddirfd, oldpath, newdirfd, newpath, flags)
@@ -653,7 +657,7 @@ hook! {
 hook! {
     unsafe fn unlink(pathname: *const libc::c_char) -> libc::c_int => (my_unlink,-1,true) {
         setdebugmode!("unlink");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportunlink(pathname);
         }
         real!(unlink)(pathname)
@@ -664,7 +668,7 @@ hook! {
 hook! {
     unsafe fn unlinkat(dirfd: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_unlinkat,-1,true) {
         setdebugmode!("unlinkat");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportunlinkat(dirfd, pathname, flags);
         }
         real!(unlinkat)(dirfd, pathname, flags)
@@ -675,7 +679,7 @@ hook! {
 hook! {
     unsafe fn chmod(pathname: *const libc::c_char, mode: libc::mode_t) -> libc::c_int => (my_chmod,-1,true) {
         setdebugmode!("chmod");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportchmod(pathname, mode);
         }
         real!(chmod)(pathname, mode)
@@ -686,7 +690,7 @@ hook! {
 hook! {
     unsafe fn fchmod(fd: libc::c_int, mode: libc::mode_t) -> libc::c_int => (my_fchmod,-1,true) {
         setdebugmode!("fchmod");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportfchmod(fd, mode);
         }
         real!(fchmod)(fd, mode)
@@ -697,75 +701,75 @@ hook! {
 hook! {
     unsafe fn fchmodat(dirfd: libc::c_int, pathname: *const libc::c_char, mode: libc::mode_t, flags: libc::c_int) -> libc::c_int => (my_fchmodat,-1,true) {
         setdebugmode!("fchmodat");
-        if TRACKER_INIT_ONCE.is_completed() {
+        if initialized() {
             TRACKER.reportfchmodat(dirfd, pathname, mode, flags);
         }
         real!(fchmodat)(dirfd, pathname, mode, flags)
     }
 }
 
-// /* pid_t wait(int *status); */
-// hook! {
-//     unsafe fn wait(status: *const libc::c_int) -> libc::pid_t => (my_wait,-1,true) {
-//         let localpid: libc::pid_t;
-//         let localstatus: *const libc::c_int;
-//         // setdebugmode!("wait");
-//         if status.is_null() {
-//             let stat: libc::c_int = 0;
-//             localstatus = &stat;
-//             localpid = real!(wait)(localstatus);
-//         } else {
-//             localstatus = status;
-//             localpid = real!(wait)(localstatus);
-//         }
-//         if libc::WCOREDUMP(*localstatus) && localpid > 0 {
-//             if TRACKER_INIT_ONCE.is_completed() {
-//                 TRACKER.reportcoredumped("wait", localpid);
-//             }
-//         }
-//         localpid
-//     }
-// }
+/* pid_t wait(int *status); */
+hook! {
+    unsafe fn wait(status: *const libc::c_int) -> libc::pid_t => (my_wait,-1,true) {
+        let localpid: libc::pid_t;
+        let localstatus: *const libc::c_int;
+        // setdebugmode!("wait");
+        if status.is_null() {
+            let stat: libc::c_int = 0;
+            localstatus = &stat;
+            localpid = real!(wait)(localstatus);
+        } else {
+            localstatus = status;
+            localpid = real!(wait)(localstatus);
+        }
+        if libc::WCOREDUMP(*localstatus) && localpid > 0 {
+            // if initialized() {
+                TRACKER.reportcoredumped("wait", localpid);
+            // }
+        }
+        localpid
+    }
+}
 
 
-// /* pid_t waitpid(pid_t pid, int *status, int options); */
-// hook! {
-//     unsafe fn waitpid(pid: libc::pid_t, status: *const libc::c_int, options: libc::c_int) -> libc::pid_t => (my_waitpid,-1,true) {
-//         let localpid: libc::pid_t;
-//         let localstatus: *const libc::c_int;
-//         // setdebugmode!("waitpid");
-//         if status.is_null() {
-//             let stat: libc::c_int = 0;
-//             localstatus = &stat;
-//             localpid = real!(waitpid)(pid, localstatus, options);
-//         } else {
-//             localstatus = status;
-//             localpid = real!(waitpid)(pid, localstatus, options);
-//         }
-//         if libc::WCOREDUMP(*localstatus) && localpid > 0 {
-//             if TRACKER_INIT_ONCE.is_completed() {
-//                 TRACKER.reportcoredumped("waitpid", localpid);
-//             }
-//         }
-//         localpid
-//     }
-// }
+/* pid_t waitpid(pid_t pid, int *status, int options); */
+hook! {
+    unsafe fn waitpid(pid: libc::pid_t, status: *const libc::c_int, options: libc::c_int) -> libc::pid_t => (my_waitpid,-1,true) {
+        let localpid: libc::pid_t;
+        let localstatus: *const libc::c_int;
+        // setdebugmode!("waitpid");
+        if status.is_null() {
+            let stat: libc::c_int = 0;
+            localstatus = &stat;
+            localpid = real!(waitpid)(pid, localstatus, options);
+        } else {
+            localstatus = status;
+            localpid = real!(waitpid)(pid, localstatus, options);
+        }
+        if libc::WCOREDUMP(*localstatus) && localpid > 0 {
+            // if initialized() {
+                TRACKER.reportcoredumped("waitpid", localpid);
+            // }
+        }
+        localpid
+    }
+}
 
-// /* int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options); */
-// hook! {
-//     unsafe fn waitid(pid: libc::pid_t, id: libc::id_t, infop: *const libc::siginfo_t, options: libc::c_int) -> libc::c_int => (my_waitid,-1,true) {
-//         let localpid: libc::pid_t;
-//         let localstatus: *const libc::c_int;
-//         // setdebugmode!("waitid");
-//         localpid = real!(waitid)(pid, id, infop, options);
-//         if libc::WCOREDUMP((*infop).si_status()) && localpid > 0 {
-//             if TRACKER_INIT_ONCE.is_completed() {
-//                 TRACKER.reportcoredumped("waitid", localpid);
-//             }
-//         }
-//         localpid
-//     }
-// }
+/* int waitid(idtype_t idtype, id_t id, siginfo_t *infop, int options); */
+hook! {
+    unsafe fn waitid(pid: libc::pid_t, id: libc::id_t, infop: *const libc::siginfo_t, options: libc::c_int) -> libc::c_int => (my_waitid,-1,true) {
+        let localpid: libc::pid_t;
+        let localstatus: *const libc::c_int;
+        // setdebugmode!("waitid");
+        localpid = real!(waitid)(pid, id, infop, options);
+        if libc::WCOREDUMP((*infop).si_status()) && localpid > 0 {
+            // if initialized() {
+                TRACKER.reportcoredumped("waitid", localpid);
+            // }
+        }
+        localpid
+    }
+}
 
 // vhook! {
 //     unsafe fn vprintf(args: std::ffi::VaList, format: *const c_char ) -> c_int => my_vprintf {
@@ -813,6 +817,9 @@ fn dlsym_intialize() {
     real!(chmod);
     real!(fchmod);
     real!(fchmodat);
+    real!(wait);
+    real!(waitpid);
+    real!(waitid);
 }
 
 #[cfg(not(test))]
@@ -827,15 +834,14 @@ fn cfoo() {
     dlsym_intialize();
     tracker::initialize_constructor_statics();
     // utils::write(0, x.as_bytes()).unwrap();
-    // tracker::initialize_main_statics();
     redhook::initialize();
     cevent!(Level::INFO, "Constructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
 }
 
+#[cfg(not(test))]
 #[dtor]
 fn dfoo() {
     // cevent!(Level::INFO, "Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
-    // tracker::initialize_main_statics();
     (&TRACKER.file).flush().unwrap();
 }
 
