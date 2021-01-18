@@ -169,7 +169,7 @@ lazy_static! {
     };
 
     pub static ref CONFIG : Config = {
-        event!(Level::INFO, "Config Reading....");
+        cevent!(Level::INFO, "Config Reading....");
         let rv : Result<Config,String> = utils::read_config(WSROOT.as_str(), "wisktrack.ini");
         let x = match rv {
             Ok(config) => { config }
@@ -184,7 +184,7 @@ lazy_static! {
                 }
             }
         };
-        event!(Level::INFO, "CONFIG Reading....Done");
+        cevent!(Level::INFO, "CONFIG Reading....Done");
         x
     };
 
@@ -322,11 +322,11 @@ pub fn initialize_constructor_statics() {
     // This is to avoid doing complex operations inside the library constructor
     // and keep the initialization limited to essentials.
     lazy_static::initialize(&TEMPLATEMAP);
-    lazy_static::initialize(&CONFIG);
-    // lazy_static::initialize(&APP64BITONLY_PATTERNS);
     lazy_static::initialize(&TRACER);
     lazy_static::initialize(&TRACKER);
     TRACKER.initialize();
+    // lazy_static::initialize(&CONFIG);
+    // lazy_static::initialize(&APP64BITONLY_PATTERNS);
 }
 
 // pub fn initialize_main_statics() -> bool {
@@ -406,7 +406,7 @@ unsafe fn pathgetabs(ipath: *const libc::c_char, fd: c_int) -> String {
                 crate::path::normalize(ipath.as_str()).replace(WSROOT_BASE.as_str(), "")
             }
         } else {
-            let mut p = crate::path::fd_to_pathstr(fd);
+            let mut p = crate::path::fd_to_pathstr(fd).unwrap();
             p.push_str("/");
             p.push_str(ipath.as_str());
             crate::path::normalize(p.as_str()).replace(WSROOT_BASE.as_str(), "")
@@ -437,7 +437,7 @@ impl Tracker {
             let tracker = Tracker {
                 file :  f,
             };
-            event!(Level::INFO, "Tracker Create: FD={:?}",tracker.file);
+            cevent!(Level::INFO, "Tracker Create: FD={:?}",tracker.file);
             tracker
         } else {
             errorexit!("Error opening track file: {}\n", WISKTRACK.as_str());
@@ -446,11 +446,11 @@ impl Tracker {
 
     pub fn initialize(&self) {
         // debug(format_args!("Tracker Initializer\n"));
-        event!(Level::INFO, "Tracker Initialization:");
+        cevent!(Level::INFO, "Tracker Initialization:");
         setdebugmode!("program_start");
 
         let pcw = (("UUID", &UUID.to_owned()), ("PID", &PID.to_owned()), ("CWD", &CWD.to_owned()), ("WSROOT", &WSROOT.to_owned()));
-        event!(Level::INFO, "{} CALLS {}", PUUID.as_str(), serde_json::to_string(&pcw).unwrap());
+        cevent!(Level::INFO, "{} CALLS {}", PUUID.as_str(), serde_json::to_string(&pcw).unwrap());
         (&self.file).write_all(format!("{} CALLS {}\n", PUUID.as_str(), serde_json::to_string(&pcw).unwrap()).as_bytes()).unwrap();
         // (&self.file).write_all(format!("{} CALLS {}\n", &PUUID.as_str(), serde_json::to_string(&UUID.as_str()).unwrap()).as_bytes()).unwrap();
         // (&self.file).write_all(format!("{} CMDLINE {}\n", &UUID.as_str(), serde_json::to_string(&CMDLINE.to_vec()).unwrap()).as_bytes()).unwrap();
@@ -464,7 +464,7 @@ impl Tracker {
         //         tracker.puuid, serde_json::to_string(&tracker.uuid).unwrap(), serde_json::to_string(&tracker.wiskfields).unwrap(),
         //         &tracker.cmdline.join(" "));
         // debug(format_args!("Tracker Initializer Complete\n"));
-        event!(Level::INFO, "Tracker Initializer Complete");
+        cevent!(Level::INFO, "Tracker Initializer Complete");
     }
     
     pub fn report(self: &Self, op : &str, value: &str) {
@@ -475,7 +475,7 @@ impl Tracker {
         let mut contin = "";
         static mut REOPENCOUNT:i32 =0;
 
-        event!(Level::INFO, "op={} value={}", op, value);
+        cevent!(Level::INFO, "op={} value={}", op, value);
         // println!("{} op={} value={}", self.uuid, op, value);
         while lenleft != 0 {
             let max = if lenleft > availen {lenleft = lenleft - availen; ind + availen } 

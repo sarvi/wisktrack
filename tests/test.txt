@@ -4,3 +4,13 @@
 
 /auto/binos-tools/bin/make-4.2.1-p8 -C /nobackup/sarvi/xewisktest/vob/ios/sys/obj-x86_64_crb-ngwc TARGET=x86_64_cge7 x86_64_crb_linux_iosd_ngwc-universalk9-ms ioucon
 rm -rf /nobackup/sarvi/xewisktest/vob/ios/sys/.iosmake/* ; cd /nobackup/sarvi/xewisktest/vob/ios/sys ; /nobackup/sarvi/xewisktest/vob/ios/sys/../../cisco.comp/cbs/scripts/iosmake --development x86_64_crb_linux_iosd_ngwc-universalk9-ms obj-x86_64_crb-ngwc/ioucon
+
+
+# The following crashes with libwisktrack. The cause seemw to be the initialization
+# of CONFIG, WISKTRACE, WISKTRACK. specifically the write operation.
+# TOBEFIXED
+# Reading the config file in the constructor causes the crash.
+# if reading the config file defered to outside of the library constructor does not
+# cause a crash
+cd binos/
+./tools/tlvc/tlvc ngio/msglib/tlv/_gen_lib_tlv_x86_64_cge7/serial_common.e

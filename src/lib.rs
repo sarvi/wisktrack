@@ -825,15 +825,10 @@ fn dlsym_intialize() {
 #[cfg(not(test))]
 #[ctor]
 fn cfoo() {
-    // let x = format!("Hello World: {}\n", 1);
-    // utils::write(0, x.as_bytes()).unwrap();
-    // let mut f:fs::File = unsafe { FromRawFd::from_raw_fd(0) };
-    // f.write(x.as_bytes()).unwrap();
     cevent!(Level::INFO, "Constructor: {}\n", std::process::id());
     cevent!(Level::INFO, "Incoming Environment: {:?}\n", env::vars_os().map(|(x,y)| x.to_str().unwrap().to_owned()).collect::<Vec<String>>());
     dlsym_intialize();
     tracker::initialize_constructor_statics();
-    // utils::write(0, x.as_bytes()).unwrap();
     redhook::initialize();
     cevent!(Level::INFO, "Constructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
 }
@@ -841,7 +836,7 @@ fn cfoo() {
 #[cfg(not(test))]
 #[dtor]
 fn dfoo() {
-    // cevent!(Level::INFO, "Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+    cevent!(Level::INFO, "Destructor Done: {}, {}\n", std::process::id(), serde_json::to_string(&CMDLINE.to_vec()).unwrap());
     (&TRACKER.file).flush().unwrap();
 }
 

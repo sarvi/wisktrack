@@ -14,6 +14,7 @@ use std::os::unix::io::{FromRawFd,AsRawFd,IntoRawFd, RawFd};
 use std::collections::{HashMap, BTreeMap};
 use std::path::{Path, PathBuf};
 use std::fs::{create_dir_all};
+use std::fs::File as OFile;
 use std::process;
 use uuid::Uuid;
 use nix::unistd::dup3;
@@ -394,14 +395,20 @@ where
     )?;
     let cfgpathstr = cfgpath.to_str().unwrap();
     cevent!(Level::INFO, "Config Opening(filename={})", cfgpathstr);
-    let mut file = File::open(cfgpathstr, O_CLOEXEC,0, -1).map_err(
-            |e| format!("Error opening {} path: {}", e.to_string(), cfgpathstr)
-        )?;
-    cevent!(Level::INFO, "Config Opened(filename={})={:?}", cfgpathstr, file);
-    // let mut file = File::open(cfgpath.to_owned()).map_err(
-    //     |e| format!("Error opening {} path: {:?}", e.to_string(), cfgpath)
-    // )?;
-    let mut content = String::new();
+    let mut file = OFile::open(cfgpathstr).map_err(
+        |e| format!("Error opening {} path: {}", e.to_string(), cfgpathstr)
+    )?;
+    // let mut file = File::open(cfgpathstr, O_CLOEXEC,0, -1).map_err(
+    //         |e| format!("Error opening {} path: {}", e.to_string(), cfgpathstr)
+    //     )?;
+    // cevent!(Level::INFO, "Config Opened(filename={})={:?}", cfgpathstr, file);
+    let bufsize = 11954; // file.file_size().unwrap();
+    // cevent!(Level::INFO, "Config Opened(filename={})={:?}, size={}", cfgpathstr, file, bufsize);
+    // let eflags = unsafe { libc::syscall(libc::SYS_fcntl, file.as_raw_fd(), libc::F_GETFD) } as libc::c_int;
+    // cevent!(Level::INFO, "fcntlfdcheck FD: {}, EFLAGS: {}", file.as_raw_fd(), eflags);
+    // let eflags = unsafe { libc::syscall(libc::SYS_fcntl, file.as_raw_fd(), libc::F_GETFL) } as libc::c_int;
+    // cevent!(Level::INFO, "fcntlfdcheck FD: {}, EFLAGS: {}", file.as_raw_fd(), eflags);
+    let mut content = String::with_capacity(bufsize+1);
     let size = file.read_to_string(&mut content).map_err(
         |e| format!("Error reading {} path: {:?}", e.to_string(), cfgpath)
     )?;

@@ -1,4 +1,5 @@
 use std::ffi::{CStr, CString};use nix::fcntl::OFlag;
+use std::io;
 use std::{fs, fmt, error};
 use std::path::{Path, PathBuf};
 use std::cell::RefCell;
@@ -8,7 +9,7 @@ use redhook::debug;
 use regex::{RegexSet};
 
 
-pub fn readlink(link: &str) -> String {
+pub fn readlink(link: &str) -> io::Result<String> {
     thread_local! {
         pub static BUFFER: RefCell<Vec<i8>> = RefCell::new(vec![0; PATH_MAX as usize]);
     }
@@ -17,17 +18,18 @@ pub fn readlink(link: &str) -> String {
         let mut b = f.borrow_mut();
         unsafe {
             let size = libc::syscall(SYS_readlink, pathname.as_ptr(), (*b).as_ptr(), PATH_MAX as usize) as usize;
-            if size>=0 {
-                b[size] = 0;
+            if size <0 {
+                return Err(io::Error::last_os_error());
             }
+            b[size] = 0;
             let x = CStr::from_ptr((*b).as_ptr()).to_owned();
-            x.into_string().expect("WISK_ERROR: Invalid path returned by readlink")
+            Ok(x.into_string().expect("WISK_ERROR: Invalid path returned by readlink"))
         }
     })
 }
 
-pub fn fd_to_pathstr(fd: c_int) -> String {
-    readlink(format!("/proc/self/fd/{}", fd).as_str()).to_owned()
+pub fn fd_to_pathstr(fd: c_int) -> io::Result<String> {
+    readlink(format!("/proc/self/fd/{}", fd).as_str())
 }
 
 pub fn join(p1: &str, p2: &str) -> String {
@@ -135,7 +137,7 @@ mod path_tests {
 
     #[test]
     fn test_readlink() {
-        assert!(!readlink("/proc/self").is_empty());
+        assert!(!readlink("/proc/self").unwrap().is_empty());
     }
 
 }

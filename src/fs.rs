@@ -11,6 +11,7 @@ use libc;
 use backtrace::Backtrace;
 
 use crate::common::{PUUID, UUID, WISKFDS};
+use crate::path;
 
 const READ_LIMIT: usize = libc::ssize_t::MAX as usize;
 
@@ -20,9 +21,10 @@ const fn max_iov() -> usize {
 
 #[derive(Debug)]
 pub struct File {
-    fd: i32,
-    buffer: Vec<u8>,
+    pub fd: i32,
+    pub buffer: Vec<u8>,
 }
+
 
 impl File {
     pub fn open(filename: &str, flags: i32, mode: i32, specificfd: i32) -> io::Result<File> {
@@ -33,13 +35,7 @@ impl File {
         let fd = if specificfd >= 0 {
             let eflags = unsafe { libc::syscall(libc::SYS_fcntl, specificfd, libc::F_GETFD) } as libc::c_int;
             if eflags >= 0 {
-                let buf: Vec<u8> = vec![0; 1024];
-                let linkpath = CString::new(format!("/proc/self/fd/{}", specificfd)).unwrap();
-                cevent!(Level::INFO, "checkingfd(filename={}, specificfd={}, linkpath={:?})", filename, specificfd, linkpath);
-                let retsize = unsafe { libc::syscall(libc::SYS_readlink, linkpath.as_ptr(), buf.as_ptr(), 1024) as i32 };
-                wiskassert!(retsize > 0, "Inherited file descriptor {} does not map to a file. Expected {}. retsize: {}", specificfd, filename, retsize);
-                wiskassert!(retsize != 1024, "Readlink truncated symlink path {:?}. retsize: {}", linkpath, retsize);
-                let fname = unsafe { CString::from_vec_unchecked(buf).into_string().unwrap() };
+                let fname = path::fd_to_pathstr(specificfd).unwrap();
                 cevent!(Level::INFO, "checkingfdtoname(filename={}, specificfd={})", fname, specificfd);
                 WISKFDS.write().unwrap().push(specificfd);
                 let f = File {
@@ -56,11 +52,9 @@ impl File {
         cevent!(Level::INFO, "opening(filename={:?})", filename);
         let tempfd = unsafe {
             if mode != 0 {
-                libc::syscall(libc::SYS_open, filename.as_ptr(), flags, mode)
-                //   S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)
+                libc::syscall(libc::SYS_openat, libc::AT_FDCWD, filename.as_ptr(), flags, mode)
             } else {
-                libc::syscall(libc::SYS_open, filename.as_ptr(), flags)
-                //   S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP)
+                libc::syscall(libc::SYS_openat, libc::AT_FDCWD, filename.as_ptr(), flags)
             }
         } as i32;
         if tempfd < 0 {
@@ -85,15 +79,17 @@ impl File {
                 tempfd, filename.to_string_lossy());
             tempfd
         };
-        let eflags = unsafe { libc::syscall(libc::SYS_fcntl, retfd, libc::F_GETFD) } as libc::c_int;
-        if eflags < 0 {
-            errorexit!("Error Validating FD: {} returned eflags: {}, File: {}\n{}",
-                       retfd, eflags, filename.to_string_lossy(), io::Error::last_os_error());
-        }
-        cevent!(Level::INFO, "fcntlfdcheck FD: {}, EFLAGS: {}", retfd, eflags);
-        if specificfd >= 0 && (eflags & libc::O_CLOEXEC) != 0 {
-            errorexit!("Error O_CLOEXEC FD: {} returned eflasgs: {}, File: {}", retfd, eflags, filename.to_string_lossy());
-        }
+        // let eflags = unsafe { libc::syscall(libc::SYS_fcntl, retfd, libc::F_GETFD) } as libc::c_int;
+        // if eflags < 0 {
+        //     errorexit!("Error Validating FD: {} returned eflags: {}, File: {}\n{}",
+        //                retfd, eflags, filename.to_string_lossy(), io::Error::last_os_error());
+        // }
+        // cevent!(Level::INFO, "fcntlfdcheck FD: {}, EFLAGS: {}", retfd, eflags);
+        // if specificfd >= 0 && (eflags & libc::O_CLOEXEC) != 0 {
+        //     errorexit!("Error O_CLOEXEC FD: {} returned eflasgs: {}, File: {}", retfd, eflags, filename.to_string_lossy());
+        // }
+        // let eflags = unsafe { libc::syscall(libc::SYS_fcntl, retfd, libc::F_GETFL) } as libc::c_int;
+        // cevent!(Level::INFO, "fcntlfdcheck FD: {}, EFLAGS: {}", retfd, eflags);
         let f = File {
             fd: retfd,
             buffer: Vec::new(),
@@ -129,11 +125,22 @@ impl File {
             Ok(())
         }
     }
+
+    pub fn file_size(&self) -> io::Result<usize> {
+        let size = unsafe { libc::syscall(libc::SYS_lseek, self.fd, 0, libc::SEEK_END) } as usize;
+        if size < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let rv = unsafe { libc::syscall(libc::SYS_lseek, self.fd, 0, libc::SEEK_SET) } as usize;
+        if rv < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        return Ok(size)
+    }
 }
 
 impl std::io::Read for File {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        cevent!(Level::INFO, "Reading File: {:?}, {}", self, cmp::min(buf.len(),READ_LIMIT));
         let x = unsafe { libc::syscall(
                              libc::SYS_read,
                              self.fd,
@@ -149,7 +156,7 @@ impl std::io::Read for File {
 
 impl Drop for File {
     fn drop(&mut self) {
-        // cevent!(Level::INFO, "Drop Closing({:?})\n{:?}", self, Backtrace::new());
+        cevent!(Level::INFO, "Drop Closing({:?})", self);
         unsafe { libc::syscall(libc::SYS_close, self.fd) };
     }
 }
@@ -231,8 +238,8 @@ mod report_tests {
     use libc::{O_CLOEXEC,O_RDONLY,O_CREAT,O_WRONLY,O_TRUNC,O_APPEND,O_LARGEFILE,S_IRUSR,S_IWUSR,S_IRGRP,S_IWGRP};
     use std::os::unix::io::{FromRawFd};
     use std::fs;
-    use std::io::Read;
-    use std::fmt::Write;
+    use std::io::{Read, Write};
+    // use std::fmt::Write as FmtWrite;
     use std::path::Path;
     use std::{thread, time};
     use std::str;
@@ -276,7 +283,7 @@ mod report_tests {
     #[test]
     fn report_test_000() -> io::Result<()> {
         setup("/tmp/testdata000")?;
-        let rfile = File::open("/tmp/testdata000",
+        let mut rfile = File::open("/tmp/testdata000",
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                     WISKFDBASE+0)?;
@@ -291,7 +298,7 @@ mod report_tests {
     #[test]
     fn report_test_001() -> io::Result<()> {
         setup("/tmp/testdata001")?;
-        let rfile = File::open("/tmp/testdata001",
+        let mut rfile = File::open("/tmp/testdata001",
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                     WISKFDBASE+1)?;
@@ -306,7 +313,7 @@ mod report_tests {
     #[test]
     fn report_test_002() -> io::Result<()> {
         setup("/tmp/testdata002")?;
-        let rfile = File::open("/tmp/testdata002",
+        let mut rfile = File::open("/tmp/testdata002",
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                     -1)?;
@@ -326,7 +333,7 @@ mod report_tests {
                                (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                WISKFDBASE+3)?;
         ofile.sync_all();
-        let rfile = File::open("/tmp/testdata003",
+        let mut rfile = File::open("/tmp/testdata003",
                                (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE) as i32,
                                (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                WISKFDBASE+3)?;
@@ -366,7 +373,7 @@ mod report_tests {
     #[test]
     fn report_test_006() -> io::Result<()> {
         setup("/tmp/testdata006")?;
-        let rfile = File::open("/tmp/testdata006",
+        let mut rfile = File::open("/tmp/testdata006",
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                     -1)?;
