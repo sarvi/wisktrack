@@ -1,13 +1,15 @@
 
 ROOT?=/usr
-DEBUG?=debug
+BUILDVARIANT?=release
 
-ifeq ($(DEBUG),debug)
-VARIANT=debug
-VARIANT_OPTION=
-else
+ifeq ($(BUILDVARIANT),release)
+$(info "Release Build......")
 VARIANT=release
 VARIANT_OPTION=--release
+else
+$(info "Debug Build......")
+VARIANT=debug
+VARIANT_OPTION=
 endif
 
 SRCS:=src/lib.rs src/tracker.rs src/utils.rs
@@ -31,7 +33,7 @@ tests/testprog32: tests/test.c
 
 target/$(VARIANT)/libwisktrack.so:  $(SRCS)
 	echo "cargo build 64bit $(VARIANT)"
-	cargo build --release
+	cargo build $(VARIANT_OPTION)
 
 .PHONY: cargo-tests
 cargo-tests:
