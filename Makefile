@@ -1,14 +1,24 @@
 
 ROOT?=/usr
+DEBUG?=debug
+
+ifeq ($(DEBUG),debug)
+VARIANT=debug
+VARIANT_OPTION=
+else
+VARIANT=release
+VARIANT_OPTION=--release
+endif
 
 SRCS:=src/lib.rs src/tracker.rs src/utils.rs
 
 .PHONY: basics
 basics:
 	echo "Basics..."
-	ln -sf target/i686-unknown-linux-gnu/debug lib
-	ln -sf target/i686-unknown-linux-gnu/debug lib32
-	ln -sf target/debug lib64
+	ln -sf target/i686-unknown-linux-gnu/$(VARIANT) lib
+	ln -sf target/i686-unknown-linux-gnu/$(VARIANT) lib32
+	ln -sf target/$(VARIANT) lib64
+	rm wisk
 	ln -sf ./ wisk
 
 tests/testprog64: tests/test.c
@@ -19,28 +29,28 @@ tests/testprog32: tests/test.c
 	echo "tests/testprog32"
 	cc -Werror -m32 -o tests/testprog32 tests/test.c
 
-target/debug/libwisktrack.so:  $(SRCS)
-	echo "cargo build 64bit"
-	cargo build
+target/$(VARIANT)/libwisktrack.so:  $(SRCS)
+	echo "cargo build 64bit $(VARIANT)"
+	cargo build --release
 
 .PHONY: cargo-tests
 cargo-tests:
 	echo "cargo test 64bit"
 	cargo test || true
 
-target/i686-unknown-linux-gnu/debug/libwisktrack.so:  $(SRCS)
-	echo "cargo build 32bit"
-	cargo build --target=i686-unknown-linux-gnu
+target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so:  $(SRCS)
+	echo "cargo build 32bit $(VARIANT)"
+	cargo build --target=i686-unknown-linux-gnu $(VARIANT_OPTION)
 
-$(ROOT)/lib/libwisktrack.so: target/debug/libwisktrack.so
+$(ROOT)/lib/libwisktrack.so: target/$(VARIANT)/libwisktrack.so
 	echo "install 64bit"
 	mkdir -p $(ROOT)/lib64/
-	install -D -m a+rwx target/debug/libwisktrack.so $(ROOT)/lib64/
+	install -D -m a+rwx target/$(VARIANT)/libwisktrack.so $(ROOT)/lib64/
 
-$(ROOT)/lib32/libwisktrack.so: target/i686-unknown-linux-gnu/debug/libwisktrack.so
+$(ROOT)/lib32/libwisktrack.so: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so
 	echo "install 32bit"
 	mkdir -p $(ROOT)/lib32/
-	install -D -m a+rwx target/i686-unknown-linux-gnu/debug/libwisktrack.so $(ROOT)/lib32/
+	install -D -m a+rwx target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so $(ROOT)/lib32/
 	ln -sf lib32 $(ROOT)/lib
 
 $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
@@ -58,7 +68,7 @@ $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 tests: tests/testprog64 tests/testprog32 basics | cargo-tests
 
 .PHONY: all
-all: target/i686-unknown-linux-gnu/debug/libwisktrack.so target/debug/libwisktrack.so basics | cargo-tests
+all: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so target/$(VARIANT)/libwisktrack.so basics | cargo-tests
 
 .PHONY: install
 install: $(ROOT)/lib32/libwisktrack.so $(ROOT)/lib/libwisktrack.so $(ROOT)/bin/cleanenv.sh

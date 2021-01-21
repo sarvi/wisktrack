@@ -38,6 +38,7 @@ DODEBUG=false
 DOSTRACE=
 LD_DEBUG=
 DOSTAP=
+DOPERF=
 while true
 do
     if [[ $1 == -ld_debug* ]];  then
@@ -77,6 +78,10 @@ do
     elif [[ $1 == -strace ]];  then
         echo "Option: $1"
         DOSTRACE=true
+        shift
+    elif [[ $1 == -perf ]];  then
+        echo "Option: $1"
+        DOPERF=true
         shift
     elif [[ $1 == -debug ]];  then
         echo "Option: $1"
@@ -137,6 +142,8 @@ echo "Starting....."
 if [[ ! -z $DOSTRACE ]]; then
 # time env -i strace -E LD_PRELOAD="/nobackup/sarvi/iosxr/platforms/common/thinxr/build/obj-x86-linux/libcpio_preload.so:$LD_PRELOAD" -ff -v -s 1024 -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" -E WISK_WSROOT="$WISK_WSROOT" "$@"
 time env -i strace -E LD_PRELOAD="$LD_PRELOAD" -ff -v -s 1024 -q -o $STRACEDIR/strace.log -E RUST_BACKTRACE="$RUST_BACKTRACE" -E TERM="$TERM" -E HOME="$HOME" -E PATH="$PATH" -E USER="$USER" -E WISK_TRACE="$WISK_TRACE" -E WISK_TRACK="$WISK_TRACK" -E WISK_CONFIG="$WISK_CONFIG" -E WISK_WSROOT="$WISK_WSROOT" "$@"
+elif [[ ! -z $DOPERF ]]; then
+time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" perf record -g $@
 else
 time env -i RUST_BACKTRACE="$RUST_BACKTRACE" TERM="$TERM" HOME="$HOME" LD_PRELOAD="$LD_PRELOAD" PATH="$PATH" USER="$USER" WISK_TRACE="$WISK_TRACE" WISK_TRACK="$WISK_TRACK" WISK_CONFIG="$WISK_CONFIG" WISK_WSROOT="$WISK_WSROOT" "$@"
 fi
