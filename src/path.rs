@@ -17,11 +17,11 @@ pub fn readlink(link: &str) -> io::Result<String> {
     BUFFER.with(|f| {
         let mut b = f.borrow_mut();
         unsafe {
-            let size = libc::syscall(SYS_readlink, pathname.as_ptr(), (*b).as_ptr(), PATH_MAX as usize) as usize;
+            let size = libc::syscall(SYS_readlink, pathname.as_ptr(), (*b).as_ptr(), PATH_MAX as usize);
             if size <0 {
                 return Err(io::Error::last_os_error());
             }
-            b[size] = 0;
+            b[size as usize] = 0;
             let x = CStr::from_ptr((*b).as_ptr()).to_owned();
             Ok(x.into_string().expect("WISK_ERROR: Invalid path returned by readlink"))
         }

@@ -27,6 +27,13 @@ use crate::fs::File;
 use crate::common::{UUID, PUUID, PID};
 
 
+pub fn cstrptr_len(s: *const u8) -> usize {
+    let mut p = s;
+    while unsafe { *p } != b'\0' {
+        p =  unsafe { p.add(1) };
+    }
+    (p as usize) - (s as usize)
+}
 
 pub unsafe fn ptr2str<'a>(ptr: *const c_char) -> &'a str {
     CStr::from_ptr(ptr).to_str().unwrap()

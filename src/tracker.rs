@@ -29,7 +29,9 @@ use crate::{errorexit, event, wiskassert};
 use crate::path;
 use crate::common::{WISKFDS, WISKTRACKFD, WISKTRACEFD, WISKTRACE, PUUID, UUID, PID};
 use crate::tracer::{TRACER};
-use crate::fs::File;
+use crate::fs::{File, JSON, SIMPLE};
+use crate::fs::WriteStr;
+use crate::bufwriter;
 
 pub const DEBUGMODE:bool = false;
 
@@ -47,45 +49,13 @@ macro_rules! setdebugmode {
     };
 }
 
-// #[derive(Default, Debug, serde::Deserialize, PartialEq)]
-// pub struct Config {
-//     only64bit: String,
-//     build: Vec<Foo>,
-// }
-
-// #[derive(Debug, serde::Deserialize, PartialEq)]
-// #[serde(untagged)]
-// enum Foo {
-//     Step(Step),
-//     Bar(String),
-// }
-
-// #[derive(Debug, serde::Deserialize, PartialEq)]
-// struct Step {
-//     name: String,
-//     #[serde(rename = "do")]
-//     make: Option<String>,
-//     put: Option<String>,
-//     get: Option<String>,
-// }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Deserialize)]
 pub struct Config {
-    // #[serde(default)]
-    // bit64: BTreeMap<String, String>,
     #[serde(default)]
     app64bitonly_patterns: Vec<String>,
 }
 
-// impl Default for Config {
-//     fn default() -> Self {
-//         Config {
-//             foo: "something".to_owned().into(),
-//             bar: HashMap::new(),
-//             numbers: vec![1, 2, 3],
-//         }
-//     }
-// }
 
 const CONFIG_DEFAULTS: &str = "
 ---
@@ -525,7 +495,11 @@ impl Tracker {
     // }
 
     pub unsafe fn reportreadlink(self: &Self, path: *const libc::c_char) {
+        // let args = utils::ptr2str(path);
         let args = (&pathgetabs(path,AT_FDCWD), );
+        (&(*self).file).write_str(&UUID.as_str());
+        (&(*self).file).write_str(" READLINK ");
+        (&(*self).file).write_cstrptr(path, JSON);
         self.report("READLINK", &serde_json::to_string(&args).unwrap());
     }
 

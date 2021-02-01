@@ -13,7 +13,9 @@ use backtrace::Backtrace;
 use crate::common::{PUUID, UUID, WISKFDS};
 use crate::path;
 
-const READ_LIMIT: usize = libc::ssize_t::MAX as usize;
+pub const READ_LIMIT: usize = libc::ssize_t::MAX as usize;
+pub const JSON: bool = true;
+pub const SIMPLE: bool = false;
 
 const fn max_iov() -> usize {
     libc::UIO_MAXIOV as usize
@@ -22,9 +24,7 @@ const fn max_iov() -> usize {
 #[derive(Debug)]
 pub struct File {
     pub fd: i32,
-    pub buffer: Vec<u8>,
 }
-
 
 impl File {
     pub fn open(filename: &str, flags: i32, mode: i32, specificfd: i32) -> io::Result<File> {
@@ -40,7 +40,6 @@ impl File {
                 WISKFDS.write().unwrap().push(specificfd);
                 let f = File {
                     fd: specificfd,
-                    buffer: Vec::new(),
                 };
                 return Ok(f)
             }
@@ -92,16 +91,16 @@ impl File {
         // cevent!(Level::INFO, "fcntlfdcheck FD: {}, EFLAGS: {}", retfd, eflags);
         let f = File {
             fd: retfd,
-            buffer: Vec::new(),
         };
+        cevent!(Level::INFO, "Created File Buffer {:?}", f);
         Ok(f)
     }
 
     pub fn clone(fd: i32, bufsize: usize) -> File {
-        File {
+        let f = File {
             fd: fd,
-            buffer: Vec::with_capacity(bufsize),
-        }
+        };
+        f
     }
 
     pub fn sanity_check(&self) {
@@ -118,6 +117,8 @@ impl File {
     }
 
     pub fn sync_all(&self) -> io::Result<()> {
+        cevent!(Level::INFO, "sync_all: File: {:?}", self);
+
         let rv = unsafe { libc::syscall(libc::SYS_fsync, self.fd) } as i32;
         if rv < 0 {
             return Err(io::Error::last_os_error());
@@ -136,6 +137,56 @@ impl File {
             return Err(io::Error::last_os_error());
         }
         return Ok(size)
+    }
+
+}
+
+pub trait WriteStr: std::io::Write {
+    fn write_cstrptr(&mut self, p: *const i8, json: bool) -> io::Result<usize> where Self: std::fmt::Debug;
+
+    fn write_str(&mut self, s: &str) -> io::Result<usize> {
+        self.write(s.as_bytes())
+    }
+
+}
+
+impl WriteStr for File {
+    fn write_cstrptr(&mut self, mut p: *const i8, json: bool) -> io::Result<usize> where Self: std::fmt::Debug {
+        cevent!(Level::INFO, "write_cstrptr: File {:?}", self);
+        // let mut d: *mut i8 = unsafe { self.buffer.as_ptr().add(self.index) } as *mut i8;
+
+        // while unsafe { *p } != b'\0' as i8 {
+        //     unsafe { *d = *p };
+        //     p =  unsafe { p.add(1) };
+        //     d = unsafe { d.add(1) };
+        //     self.index = self.index + 1;
+        //     if self.index >= libc::PIPE_BUF {
+        //         cevent!(Level::INFO, "write_cstrptr: File {:?}: END", self);
+        //         self.index=0;
+        //     }
+        // }
+        cevent!(Level::INFO, "write_cstrptr: File {:?}", self);
+        Ok(0 as usize)
+    }
+}
+
+impl WriteStr for &File {
+    fn write_cstrptr(&mut self, mut p: *const i8, json: bool) -> io::Result<usize> where Self: std::fmt::Debug {
+        cevent!(Level::INFO, "write_cstrptr: File {:?}", self);
+        // let mut d: *mut i8 = self.buffer.as_ptr().add(self.index) as *mut i8;
+
+        // while unsafe { *p } != b'\0' as i8 {
+        //     unsafe { *d = *p };
+        //     p =  unsafe { p.add(1) };
+        //     d = unsafe { d.add(1) };
+        //     self.as_mut() = self.index + 1;
+        //     if self.index >= libc::PIPE_BUF {
+        //         cevent!(Level::INFO, "write_cstrptr: File {:?}: END", self);
+        //         *(self.as_mut()) = 0;
+        //     }
+        // }
+        cevent!(Level::INFO, "write_cstrptr: File {:?}", self);
+        Ok(0 as usize)
     }
 }
 
@@ -163,6 +214,7 @@ impl Drop for File {
 
 impl std::io::Write for File {
     fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
+        cevent!(Level::INFO, "File::Write: {:?}", String::from_utf8_lossy(buf));
         let x = unsafe { libc::syscall(
                             libc::SYS_write,
                             self.fd,
@@ -182,6 +234,7 @@ impl std::io::Write for File {
 
 impl std::io::Write for &File {
     fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
+        cevent!(Level::INFO, "&File::Write {:?}", String::from_utf8_lossy(buf));
         let x = unsafe { libc::syscall(
                             libc::SYS_write,
                             self.fd,
@@ -199,41 +252,43 @@ impl std::io::Write for &File {
 
 }
 
-impl fmt::Write for File {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let raw_s = s.as_bytes();
-        match self.write(raw_s) {
-            Ok(x) => Ok(()),
-            Err(e) => Err(fmt::Error),
-        }
-        // Ok(())
-    }
+// impl fmt::Write for File {
+//     fn write_str(&mut self, s: &str) -> fmt::Result {
+//         let raw_s = s.as_bytes();
+//         match self.write(raw_s) {
+//             Ok(x) => Ok(()),
+//             Err(e) => Err(fmt::Error),
+//         }
+//         // Ok(())
+//     }
 
-    fn write_fmt(&mut self, args: fmt::Arguments) -> Result<(), fmt::Error> {
-        fmt::write(self, args)?;
-        // w.as_str().ok_or(fmt::Error)
-        Ok(())
-    }
-}
+//     fn write_fmt(&mut self, args: fmt::Arguments) -> Result<(), fmt::Error> {
+//         cevent!(Level::INFO, "Write_fmt data: {:?}", Backtrace::new());
+//         fmt::write(self, args)?;
+//         // w.as_str().ok_or(fmt::Error)
+//         Ok(())
+//     }
+// }
 
-impl fmt::Write for &File {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        let raw_s = s.as_bytes();
-        match self.write(raw_s) {
-            Ok(x) => Ok(()),
-            Err(e) => Err(fmt::Error),
-        }
-    }
+// impl fmt::Write for &File {
+//     fn write_str(&mut self, s: &str) -> fmt::Result {
+//         let raw_s = s.as_bytes();
+//         match self.write(raw_s) {
+//             Ok(x) => Ok(()),
+//             Err(e) => Err(fmt::Error),
+//         }
+//     }
 
-    // fn write_fmt(&mut self, args: fmt::Arguments) -> Result<(), fmt::Error> {
-    //     fmt::write(self, args)?;
-    //     // w.as_str().ok_or(fmt::Error)
-    //     Ok(())
-    // }
-}
+//     fn write_fmt(&mut self, args: fmt::Arguments) -> Result<(), fmt::Error> {
+//         cevent!(Level::INFO, "Write_fmt data &File {:?}", Backtrace::new());
+//         fmt::write(self, args)?;
+//         // w.as_str().ok_or(fmt::Error)
+//         Ok(())
+//     }
+// }
 
 #[cfg(test)]
-mod report_tests {
+mod tests_write {
     use std::io;
     use libc::{O_CLOEXEC,O_RDONLY,O_CREAT,O_WRONLY,O_TRUNC,O_APPEND,O_LARGEFILE,S_IRUSR,S_IWUSR,S_IRGRP,S_IWGRP};
     use std::os::unix::io::{FromRawFd};
@@ -244,7 +299,9 @@ mod report_tests {
     use std::{thread, time};
     use std::str;
     use super::*;
-    use crate::common::WISKFDBASE;
+
+    static MODULENAME: &str = "write";
+    const WRITEFDBASE:i32 = 100;
 
     pub struct TestTracer {
         pub file: File,
@@ -252,10 +309,10 @@ mod report_tests {
 
     impl TestTracer {
         pub fn new() -> TestTracer {
-            let f: File = File::open("/tmp/testdataglobal",
+            let f: File = File::open("/tmp/tests_write_dataglobal",
                                      (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                      (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
-                                     WISKFDBASE+5).unwrap();
+                                     WRITEFDBASE+5).unwrap();
             let t = TestTracer {
                 file: f,
             };
@@ -282,114 +339,281 @@ mod report_tests {
 
     #[test]
     fn report_test_000() -> io::Result<()> {
-        setup("/tmp/testdata000")?;
-        let mut rfile = File::open("/tmp/testdata000",
+        static TESTID: &str = "000";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
-                                    WISKFDBASE+0)?;
-        let message = format!("Hello World: {}\n", 1);
+                                    WRITEFDBASE+0)?;
+        let message = format!("Hello World: {}{}\n", MODULENAME,TESTID);
         rfile.write(message.as_bytes()).unwrap();
         rfile.sync_all();
-        assert_eq!(WISKFDBASE+0, rfile.as_raw_fd());
-        assert_eq!(fs::read_to_string("/tmp/testdata000").unwrap(), "Hello World: 1\n");
-        Ok(cleanup("/tmp/testdata000")?)
+        assert_eq!(WRITEFDBASE+0, rfile.as_raw_fd());
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID)).unwrap(), format!("Hello World: {}{}\n", MODULENAME, TESTID));
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
     }
 
     #[test]
     fn report_test_001() -> io::Result<()> {
-        setup("/tmp/testdata001")?;
-        let mut rfile = File::open("/tmp/testdata001",
+        static TESTID: &str = "001";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
-                                    WISKFDBASE+1)?;
-        let message = format!("Hello World: {}\n", 1);
+                                    WRITEFDBASE+1)?;
+        let message = format!("Hello World: {}\n", TESTID);
         rfile.write(message.as_bytes()).unwrap();
         rfile.sync_all();
-        assert_eq!(WISKFDBASE+1, rfile.as_raw_fd());
-        assert_eq!(fs::read_to_string("/tmp/testdata001").unwrap(), "Hello World: 1\n");
-        Ok(cleanup("/tmp/testdata001")?)
+        assert_eq!(WRITEFDBASE+1, rfile.as_raw_fd());
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID)).unwrap(), format!("Hello World: {}\n", TESTID));
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
     }
 
     #[test]
     fn report_test_002() -> io::Result<()> {
-        setup("/tmp/testdata002")?;
-        let mut rfile = File::open("/tmp/testdata002",
+        static TESTID: &str = "002";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                     -1)?;
-        let message = format!("Hello World: {}\n", 1);
+        let message = format!("Hello World: {}\n", TESTID);
         // assert_eq!(3, rfile.as_raw_fd());
         rfile.write(message.as_bytes()).unwrap();
         rfile.sync_all();
-        assert_eq!(fs::read_to_string("/tmp/testdata002").unwrap(), "Hello World: 1\n");
-        Ok(cleanup("/tmp/testdata002")?)
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID)).unwrap(), format!("Hello World: {}\n", TESTID));
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
     }
 
     #[test]
     fn report_test_003() -> io::Result<()> {
-        setup("/tmp/testdata003")?;
-        let ofile = File::open("/tmp/testdata003",
+        static TESTID: &str = "003";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let ofile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
-                               WISKFDBASE+3)?;
+                               WRITEFDBASE+3)?;
         ofile.sync_all();
-        let mut rfile = File::open("/tmp/testdata003",
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                (O_CREAT|O_WRONLY|O_APPEND|O_LARGEFILE) as i32,
                                (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
-                               WISKFDBASE+3)?;
-        assert_eq!(rfile.as_raw_fd(), WISKFDBASE+3);
-        let message = format!("Hello World: {}\n", 1);
+                               WRITEFDBASE+3)?;
+        assert_eq!(rfile.as_raw_fd(), WRITEFDBASE+3);
+        let message = format!("Hello World: {}\n", TESTID);
         rfile.write(message.as_bytes()).unwrap();
         rfile.sync_all();
-        assert_eq!(fs::read_to_string("/tmp/testdata003").unwrap(), "Hello World: 1\n");
-        Ok(cleanup("/tmp/testdata003")?)
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID)).unwrap(), format!("Hello World: {}\n", TESTID));
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
     }
 
     #[test]
     fn report_test_004() -> io::Result<()> {
-        setup("/tmp/testdata004")?;
-        let mut rfile = File::open("/tmp/testdata004",
+        static TESTID: &str = "004";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
-                                    WISKFDBASE+4)?;
-        assert_eq!(rfile.as_raw_fd(), WISKFDBASE+4);
+                                    WRITEFDBASE+4)?;
+        assert_eq!(rfile.as_raw_fd(), WRITEFDBASE+4);
         rfile.sync_all();
-        rfile.write_fmt(format_args!("Hello World: {}\n", 1)).unwrap();
+        rfile.write_fmt(format_args!("Hello World: {}\n", TESTID)).unwrap();
         rfile.sync_all();
-        assert_eq!(fs::read_to_string("/tmp/testdata004").unwrap(), "Hello World: 1\n");
-        Ok(cleanup("/tmp/testdata004")?)
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID)).unwrap(), format!("Hello World: {}\n", TESTID));
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
     }
 
     #[test]
     fn report_test_005() -> io::Result<()> {
-        assert_eq!(TRACER.file.as_raw_fd(), WISKFDBASE+5);
+        static TESTID: &str = "005";
+        assert_eq!(TRACER.file.as_raw_fd(), WRITEFDBASE+5);
         // (&(*TRACER).file).write_fmt(format_args!("Hello World: {}\n", 1)).unwrap();
-        write!(&(*TRACER).file, "Hello World: {}\n", 1);
+        write!(&(*TRACER).file, "Hello World: {}\n", TESTID);
         TRACER.file.sync_all();
-        assert_eq!(fs::read_to_string("/tmp/testdataglobal").unwrap(), "Hello World: 1\n");
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_dataglobal", MODULENAME)).unwrap(), format!("Hello World: {}\n", TESTID));
         Ok(())
     }
 
     #[test]
     fn report_test_006() -> io::Result<()> {
-        setup("/tmp/testdata006")?;
-        let mut rfile = File::open("/tmp/testdata006",
+        static TESTID: &str = "006";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                    (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
                                     -1)?;
-        let message = format!("Hello World: {}\n", 1);
+        let message = format!("Hello World: {}\n", TESTID);
         rfile.write(message.as_bytes()).unwrap();
         rfile.sync_all();
-        let mut rfile = File::open("/tmp/testdata006",
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
                                    (O_RDONLY|O_CLOEXEC) as i32,
                                     (0) as i32,
                                     -1)?;
-        let mut buf = [0; 15];
+        let mut buf = [0; 17];
         rfile.read(&mut buf);
-        assert_eq!("Hello World: 1\n", str::from_utf8(&buf).unwrap());
-        Ok(cleanup("/tmp/testdata006")?)
+        assert_eq!(format!("Hello World: {}\n", TESTID), str::from_utf8(&buf).unwrap());
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
     }
 
 
 }
 
+
+#[cfg(test)]
+mod tests_write_fmt {
+    use std::io;
+    use libc::{O_CLOEXEC,O_RDONLY,O_CREAT,O_WRONLY,O_TRUNC,O_APPEND,O_LARGEFILE,S_IRUSR,S_IWUSR,S_IRGRP,S_IWGRP};
+    use std::os::unix::io::{FromRawFd};
+    use std::fs;
+    use std::io::{Read, Write};
+    // use std::fmt::Write as FmtWrite;
+    use std::path::Path;
+    use std::{thread, time};
+    use std::str;
+    use super::*;
+
+    static MODULENAME: &str = "write_fmt";
+    const WRITEFMTFDBASE:i32 = 200;
+
+    pub struct TestTracer {
+        pub file: File,
+    }
+
+    impl TestTracer {
+        pub fn new() -> TestTracer {
+            let f: File = File::open("/tmp/tests_write_fmt_dataglobal",
+                                     (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
+                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
+                                     WRITEFMTFDBASE+5).unwrap();
+            let t = TestTracer {
+                file: f,
+            };
+            t
+        }
+    }
+
+    lazy_static! {
+        pub static ref TRACER: TestTracer = TestTracer::new();
+    }
+
+    pub fn setup(tfile: &str) -> io::Result<()> {
+        if Path::new(tfile).exists() {
+            fs::remove_file(tfile)?;
+        }
+        Ok(())
+    }
+    pub fn cleanup(tfile: &str) -> io::Result<()> {
+        if Path::new(tfile).exists() {
+            fs::remove_file(tfile)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn report_test_000() -> io::Result<()> {
+        static TESTID: &str = "000";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
+                                   (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
+                                    (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
+                                    WRITEFMTFDBASE+0)?;
+        write!(rfile, "Hello World fmt: {}\n", TESTID);
+        // rfile.write_fmt(format_args!("Hello World: {}\n", 1)).unwrap();
+        rfile.sync_all();
+        assert_eq!(WRITEFMTFDBASE+0, rfile.as_raw_fd());
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID)).unwrap(), format!("Hello World fmt: {}\n", TESTID));
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
+    }
+
+    #[test]
+    fn report_test_001() -> io::Result<()> {
+        static TESTID: &str = "001";
+        write!(&(*TRACER).file, "Hello World fmt: {}\n", TESTID);
+        // rfile.write_fmt(format_args!("Hello World: {}\n", 1)).unwrap();
+        TRACER.file.sync_all();
+        assert_eq!(WRITEFMTFDBASE+5, TRACER.file.as_raw_fd());
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_dataglobal", MODULENAME)).unwrap(), format!("Hello World fmt: {}\n", TESTID));
+        Ok(())
+    }
+
+}
+
+#[cfg(test)]
+mod tests_write_cstrptr {
+    use std::io;
+    use libc::{O_CLOEXEC,O_RDONLY,O_CREAT,O_WRONLY,O_TRUNC,O_APPEND,O_LARGEFILE,S_IRUSR,S_IWUSR,S_IRGRP,S_IWGRP};
+    use std::os::unix::io::{FromRawFd};
+    use std::fs;
+    use std::io::{Read, Write};
+    // use std::fmt::Write as FmtWrite;
+    use std::path::Path;
+    use std::{thread, time};
+    use std::str;
+    use super::*;
+
+    static MODULENAME: &str = "writercstrptr";
+    const WRITERCSTRPTRFDBASE:i32 = 300;
+
+    pub struct TestTracer {
+        pub file: File,
+    }
+
+    impl TestTracer {
+        pub fn new() -> TestTracer {
+            let f: File = File::open(&format!("/tmp/tests_{}_dataglobal", MODULENAME),
+                                     (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
+                                     (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
+                                     WRITERCSTRPTRFDBASE+5).unwrap();
+            let t = TestTracer {
+                file: f,
+            };
+            t
+        }
+    }
+
+    lazy_static! {
+        pub static ref TRACER: TestTracer = TestTracer::new();
+    }
+
+    pub fn setup(tfile: &str) -> io::Result<()> {
+        if Path::new(tfile).exists() {
+            fs::remove_file(tfile)?;
+        }
+        Ok(())
+    }
+    pub fn cleanup(tfile: &str) -> io::Result<()> {
+        if Path::new(tfile).exists() {
+            fs::remove_file(tfile)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn report_test_000() -> io::Result<()> {
+        static TESTID: &str = "000";
+        setup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?;
+        let mut rfile = File::open(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID),
+                                   (O_CREAT|O_WRONLY|O_TRUNC|O_LARGEFILE) as i32,
+                                    (S_IRUSR|S_IWUSR|S_IRGRP|S_IWGRP) as i32,
+                                    WRITERCSTRPTRFDBASE+0)?;
+        let cstr = CStr::from_bytes_with_nul(b"Hello World cstrptr: 0\0").unwrap();
+        rfile.write_cstrptr(cstr.as_ptr(), JSON);
+        // rfile.write_fmt(format_args!("Hello World: {}\n", 1)).unwrap();
+        rfile.sync_all();
+        assert_eq!(WRITERCSTRPTRFDBASE+0, rfile.as_raw_fd());
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID)).unwrap(), "Hello World cstrptr: 0\n");
+        Ok(cleanup(&format!("/tmp/tests_{}_data{}", MODULENAME, TESTID))?)
+    }
+
+    #[test]
+    fn report_test_001() -> io::Result<()> {
+        static TESTID: &str = "001";
+        let cstr = CStr::from_bytes_with_nul(b"Hello World cstrptr: 1\0").unwrap();
+        (&(*TRACER).file).write_cstrptr(cstr.as_ptr(), JSON);
+        // rfile.write_fmt(format_args!("Hello World: {}\n", 1)).unwrap();
+        TRACER.file.sync_all();
+        assert_eq!(WRITERCSTRPTRFDBASE+5, TRACER.file.as_raw_fd());
+        assert_eq!(fs::read_to_string(&format!("/tmp/tests_{}_dataglobal", MODULENAME)).unwrap(), "Hello World cstrptr: 1\n");
+        Ok(())
+    }
+
+}

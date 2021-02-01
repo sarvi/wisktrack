@@ -1,4 +1,5 @@
 #![feature(c_variadic)]
+#![feature(thread_local)]
 
 #[macro_use]
 extern crate redhook;
@@ -28,6 +29,7 @@ mod tracker;
 mod utils;
 mod path;
 mod fs;
+mod bufwriter;
 
 use std::{env, ptr};
 // use tracker::{MY_DISPATCH_initialized, MY_DISPATCH, TRACKER, DEBUGMODE};
