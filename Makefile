@@ -20,7 +20,7 @@ basics:
 	ln -sf target/i686-unknown-linux-gnu/$(VARIANT) lib
 	ln -sf target/i686-unknown-linux-gnu/$(VARIANT) lib32
 	ln -sf target/$(VARIANT) lib64
-	rm wisk
+	rm -f wisk
 	ln -sf ./ wisk
 
 tests/testprog64: tests/test.c
