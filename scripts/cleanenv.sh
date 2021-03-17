@@ -39,6 +39,7 @@ DOSTRACE=
 LD_DEBUG=
 DOSTAP=
 DOPERF=
+WISK_TRACK=
 while true
 do
     if [[ $1 == -ld_debug* ]];  then
@@ -60,6 +61,11 @@ do
         echo "DOSTAP: $DOSTAP"
         shift
         exec sudo stap -v $DOSTAP -d /usr/bin/bash -d `ls /lib64/libc-*` -d $LIBRARY_PATH_BASE/lib64/libwisktrack.so -d $LIBRARY_PATH_BASE/lib32/libwisktrack.so -o $WORKSPACE_DIR/logs/cleanenv.stap.log -c "$SCRIPT $*"
+    elif [[ $1 == -track* ]];  then
+        echo "Option: $1"
+        WISK_TRACK=${1##*-track=}
+        echo "WISK_TRACK: $WISK_TRACK"
+        shift
     elif [[ $1 == -trace* ]];  then
         echo "Option: $1"
         WISK_TRACE=`pwd`/wisktrace.log
@@ -105,11 +111,13 @@ RUST_BACKTRACE=1
 # rm -f `pwd`/wisktrack.pipe
 # mknod `pwd`/wisktrack.pipe p
 # WISK_TRACK=`pwd`/wisktrack.pipe
-WISK_TRACK=$WISK_WSROOT/wisktrack.file
-# WISK_TRACK=`pwd`/wisktrack.file
+# WISK_TRACK=$WISK_WSROOT/wisktrack.file
+if [[ -z "$WISK_TRACK" ]]; then
+    WISK_TRACK=`pwd`/wisktrack.file
+fi
 # WISK_TRACK=`pwd`/wisktrack
 # WISK_TRACK=wisktrack.file
-WISK_TRACK=
+# WISK_TRACK=
 LD_PRELOAD="$LIBRARY_PATH_BASE/\${LIB}/libwisktrack.so"
 STRACEDIR="strace/"
 
@@ -120,6 +128,7 @@ echo "PATH: $PATH"
 
 rm -rf $STRACEDIR ; mkdir $STRACEDIR
 rm -f $WISK_TRACE
+rm -rf $WISK_TRACK
 if [[ -z "$WISK_TRACK" ]]; then
     rm -rf $WISK_WSROOT/wisktrack.file
 else
