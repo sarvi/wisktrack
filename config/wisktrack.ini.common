@@ -1,0 +1,8 @@
+---
+# test: My Message {{cwd}}     ---> {{wsroot}}   --> {{WISKTRACK}}  --> {{LDPRELOAD}} --> {{UUID}}
+x: 1.0
+y: 2.0
+
+app64bitonly_patterns:
+    - 'asdadasd/asdai-++.sdad'
+
