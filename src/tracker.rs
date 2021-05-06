@@ -569,14 +569,12 @@ impl Tracker {
     }
 
     pub unsafe fn reportopen(self: &Self, pathname: *const libc::c_char, flags: libc::c_int, mode: libc::c_int) {
-        let oper = if (flags & O_RDONLY) == O_RDONLY || (flags & O_APPEND) == O_APPEND {
-            "READS"
+        let oper = if (flags & O_RDWR) == O_RDWR {
+            "READWRITES"
         } else if (flags & O_WRONLY) == O_WRONLY {
             "WRITES"
-        } else if (flags & O_RDWR) == O_RDWR {
-            "READWRITES"
         } else {
-            "UNKNOWN"
+            "READS"
         };
         if (flags & O_CREAT) == O_CREAT {
             let args = (pathgetabs(pathname,AT_FDCWD), flags, mode);
