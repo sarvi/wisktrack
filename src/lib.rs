@@ -609,6 +609,41 @@ hook! {
     }
 }
 
+/* int rename(const char *old, const char *new); */
+hook! {
+    unsafe fn rename(old: *const libc::c_char, new: *const libc::c_char) -> libc::c_int => (my_rename,-1,true) {
+        setdebugmode!("rename");
+        if initialized() {
+            TRACKER.reportrename(old, new);
+        }
+        real!(rename)(old, new)
+    }
+}
+
+
+/* int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath); */
+hook! {
+    unsafe fn renameat(olddirfd: libc::c_int, oldpath: *const libc::c_char, newdirfd: libc::c_int, newpath: *const libc::c_char) -> libc::c_int => (my_renameat,-1,true) {
+        setdebugmode!("renameat");
+        if initialized() {
+            TRACKER.reportrenameat(olddirfd, oldpath, newdirfd, newpath);
+        }
+        real!(renameat)(olddirfd, oldpath, newdirfd, newpath)
+    }
+}
+
+
+/* int renameat2(int olddirfd, const char *oldpath, int newdirfd, const char *newpath, unsigned int flags); */
+hook! {
+    unsafe fn renameat2(olddirfd: libc::c_int, oldpath: *const libc::c_char, newdirfd: libc::c_int, newpath: *const libc::c_char, flags: libc::c_int) -> libc::c_int => (my_renameat2,-1,true) {
+        setdebugmode!("renameat2");
+        if initialized() {
+            TRACKER.reportrenameat2(olddirfd, oldpath, newdirfd, newpath, flags);
+        }
+        real!(renameat2)(olddirfd, oldpath, newdirfd, newpath, flags)
+    }
+}
+
 
 /* int symlink(const char *target, const char *linkpath); */
 hook! {

@@ -503,13 +503,28 @@ impl Tracker {
         self.report("READLINK", &serde_json::to_string(&args).unwrap());
     }
 
+    pub unsafe fn reportrename(self: &Self, old: *const libc::c_char, new: *const libc::c_char) {
+        let args = (pathgetabs(old,AT_FDCWD), pathgetabs(new,AT_FDCWD));
+        self.report("RENAMES", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportrenameat(self: &Self, olddirfd: libc::c_int, oldpath: *const libc::c_char, newdirfd: libc::c_int, newpath: *const libc::c_char) {
+        let args = (pathgetabs(oldpath,olddirfd), pathgetabs(newpath, newdirfd));
+        self.report("RENAMES", &serde_json::to_string(&args).unwrap());
+    }
+
+    pub unsafe fn reportrenameat2(self: &Self, olddirfd: libc::c_int, oldpath: *const libc::c_char, newdirfd: libc::c_int, newpath: *const libc::c_char, flags: libc::c_int) {
+        let args = (pathgetabs(oldpath,olddirfd), pathgetabs(newpath, newdirfd));
+        self.report("RENAMES", &serde_json::to_string(&args).unwrap());
+    }
+
     pub unsafe fn reportsymlink(self: &Self, target: *const libc::c_char, linkpath: *const libc::c_char) {
-        let args = (utils::ptr2str(target), pathgetabs(linkpath,AT_FDCWD));
+        let args = (pathgetabs(target,AT_FDCWD), pathgetabs(linkpath,AT_FDCWD));
         self.report("LINKS", &serde_json::to_string(&args).unwrap());
     }
 
     pub unsafe fn reportsymlinkat(self: &Self, target: *const libc::c_char, newdirfd: libc::c_int, linkpath: *const libc::c_char) {
-        let args = (utils::ptr2str(target), pathgetabs(linkpath, newdirfd));
+        let args = (pathgetabs(target,AT_FDCWD), pathgetabs(linkpath, newdirfd));
         self.report("LINKS", &serde_json::to_string(&args).unwrap());
     }
 
