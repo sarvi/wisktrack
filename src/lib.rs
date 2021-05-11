@@ -97,8 +97,9 @@ hook! {
             //     f
             // }
         } else {
-            TRACKER.reportfopen(name, mode);
-            real!(fopen)(name, mode)
+            let rv: *const libc::FILE = real!(fopen)(name, mode);
+            TRACKER.reportfopen(rv, name, mode);
+            rv
         }
     }
 }
@@ -125,8 +126,9 @@ hook! {
             //     f
             // }
         } else {
-            TRACKER.reportfopen(name, mode);
-            real!(fopen64)(name, mode)
+            let rv: *const libc::FILE = real!(fopen64)(name, mode);
+            TRACKER.reportfopen(rv, name, mode);
+            rv
         }
     }
 }
@@ -163,11 +165,13 @@ dhook! {
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
-                TRACKER.reportopen(pathname,flags,mode);
-                real!(open)(pathname, flags, mode)
+                let rv: libc::c_int = real!(open)(pathname, flags, mode);
+                TRACKER.reportopen(rv, pathname,flags,mode);
+                rv
             } else {
-                TRACKER.reportopen(pathname,flags,0);
-                real!(open)(pathname, flags)
+                let rv: libc::c_int = real!(open)(pathname, flags);
+                TRACKER.reportopen(rv, pathname,flags,0);
+                rv
             }
         }
     }
@@ -208,11 +212,13 @@ dhook! {
             if ((flags & O_CREAT) == O_CREAT) || ((flags & O_TMPFILE) == O_TMPFILE) {
                 let mut ap: std::ffi::VaListImpl = args.clone();
                 let mode: c_int = ap.arg::<c_int>();
-                TRACKER.reportopen(pathname,flags,mode);
-                real!(open64)(pathname, flags, mode)
+                let rv: libc::c_int = real!(open64)(pathname, flags, mode);
+                TRACKER.reportopen(rv, pathname,flags,mode);
+                rv
             } else {
-                TRACKER.reportopen(pathname,flags,0);
-                real!(open64)(pathname, flags)
+                let rv: libc::c_int = real!(open64)(pathname, flags);
+                TRACKER.reportopen(rv, pathname,flags,0);
+                rv
             }
         }
     }

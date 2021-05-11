@@ -568,28 +568,31 @@ impl Tracker {
         self.report("WRITES", &serde_json::to_string(&args).unwrap());
     }
 
-    pub unsafe fn reportfopen(self: &Self, name: *const libc::c_char, mode: *const libc::c_char) {
+    pub unsafe fn reportfopen(self: &Self, rv: *const libc::FILE, name: *const libc::c_char, mode: *const libc::c_char) {
         let args = (pathgetabs(name,AT_FDCWD), utils::ptr2str(mode));
         if args.1.contains("w") || args.1.contains("a") {
-            self.report("WRITES", &serde_json::to_string(&args).unwrap());
+            self.report(if rv.is_null() { "WRITESFAIL" } else { "WRITES" },
+                        &serde_json::to_string(&args).unwrap());
             if args.1.contains("+") {
-                self.report("READS", &serde_json::to_string(&args).unwrap());
+                self.report(if rv.is_null() { "READSFAIL" } else { "READS" },
+                            &serde_json::to_string(&args).unwrap());
             }
         } else {
-            self.report("READS", &serde_json::to_string(&args).unwrap());
+            self.report(if rv.is_null() { "READSFAIL" } else { "READS" },
+                        &serde_json::to_string(&args).unwrap());
             if args.1.contains("+") {
-                self.report("WRITES", &serde_json::to_string(&args).unwrap());
+                self.report(if rv.is_null() { "WRITESFAIL" } else { "WRITES" }, &serde_json::to_string(&args).unwrap());
             }
         }
     }
 
-    pub unsafe fn reportopen(self: &Self, pathname: *const libc::c_char, flags: libc::c_int, mode: libc::c_int) {
+    pub unsafe fn reportopen(self: &Self, rv: libc::c_int, pathname: *const libc::c_char, flags: libc::c_int, mode: libc::c_int) {
         let oper = if (flags & O_RDWR) == O_RDWR {
-            "READWRITES"
+            if rv<0  { "READWRITESFAIL" } else { "READWRITES" }
         } else if (flags & O_WRONLY) == O_WRONLY {
-            "WRITES"
+            if rv<0  { "WRITESFAIL" } else { "WRITES" }
         } else {
-            "READS"
+            if rv<0  { "READSFAIL" } else { "READS" }
         };
         if (flags & O_CREAT) == O_CREAT {
             let args = (pathgetabs(pathname,AT_FDCWD), flags, mode);
