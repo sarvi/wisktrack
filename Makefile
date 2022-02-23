@@ -69,6 +69,9 @@ $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 .PHONY: tests
 tests: tests/testprog64 tests/testprog32 basics | cargo-tests
 
+.PHONY: buildonly
+buildonly: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so target/$(VARIANT)/libwisktrack.so basics
+
 .PHONY: all
 all: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so target/$(VARIANT)/libwisktrack.so basics | cargo-tests
 

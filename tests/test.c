@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -100,7 +102,7 @@ int main(int argc, char *argv[])
             execvp("/bin/pwd", eargv);
         } else if (strcmp(argv[1], "execvpe") == 0) {
             char *eargv[] = {"ls", "-l", "/usr/bin/ls", NULL};
-            char *env[] = {"PATH=/nothing:", NULL};
+            char *env[] = {"PATH=/bin:", NULL};
             execvpe("ls", eargv, env);
         } else if (strcmp(argv[1], "execve") == 0) {
             char *eargv[] = {"ls", "-l", "/usr/bin/ls", NULL};
@@ -115,6 +117,44 @@ int main(int argc, char *argv[])
         } else if (strcmp(argv[1], "execle") == 0) {
             char *env[] = {"PATH=/nothing:", NULL};
             execle("/bin/ls", "ls", "-l", "/usr/bin/ls", NULL, env);
+        } else if (strcmp(argv[1], "posix_spawn") == 0) {
+            pid_t pid;
+            char *env[] = {"PATH=/nothing:", NULL};
+            char *argv[] = {"ls", "-l", "/usr/bin/ls", NULL};
+            int status;
+            status = posix_spawn(&pid, "/bin/ls", NULL, NULL, argv, env);
+            if (status == 0) {
+                printf("Child pid: %i\n", pid);
+                do {
+                if (waitpid(pid, &status, 0) != -1) {
+                    printf("Child status %d\n", WEXITSTATUS(status));
+                } else {
+                    perror("waitpid");
+                    exit(1);
+                }
+                } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+            } else {
+                printf("posix_spawn: %s\n", strerror(status));
+            }
+        } else if (strcmp(argv[1], "posix_spawnp") == 0) {
+            pid_t pid;
+            char *env[] = {"PATH=/bin:", NULL};
+            char *argv[] = {"ls", "-l", "/usr/bin/ls", NULL};
+            int status;
+            status = posix_spawnp(&pid, "ls", NULL, NULL, argv, env);
+            if (status == 0) {
+                printf("Child pid: %i\n", pid);
+                do {
+                if (waitpid(pid, &status, 0) != -1) {
+                    printf("Child status %d\n", WEXITSTATUS(status));
+                } else {
+                    perror("waitpid");
+                    exit(1);
+                }
+                } while (!WIFEXITED(status) && !WIFSIGNALED(status));
+            } else {
+                printf("posix_spawnp: %s\n", strerror(status));
+            }
         } else if (strcmp(argv[1], "segfault") == 0) {
             int *intptr=NULL;
             *(intptr) = 0xffff;

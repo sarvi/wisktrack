@@ -12,6 +12,7 @@ use backtrace::Backtrace;
 
 use crate::common::{PUUID, UUID, WISKFDS};
 use crate::path;
+use crate::TRACER;
 
 pub const READ_LIMIT: usize = libc::ssize_t::MAX as usize;
 pub const JSON: bool = true;

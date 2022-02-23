@@ -25,6 +25,7 @@ use regex::{RegexSet};
 use crate::path;
 use crate::fs::File;
 use crate::common::{UUID, PUUID, PID};
+use crate::TRACER;
 
 
 pub fn cstrptr_len(s: *const u8) -> usize {
@@ -61,7 +62,6 @@ pub fn cpptr2vecptr(vecptr: *const *const libc::c_char) -> Vec<*const c_char> {
     }
     vcstr
 }
-
 
 pub fn cpptr2vcstr(vecptr: *const *const libc::c_char) -> Vec<CString> {
     let mut vcstr: Vec<CString> = vec!();

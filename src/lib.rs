@@ -52,7 +52,7 @@ use std::os::unix::io::FromRawFd;
 use errno::{Errno, errno, set_errno};
 use common::{WISKFDS, WISKTRACKFD, WISKTRACEFD, WISKTRACE, PUUID, UUID, PID};
 use tracer::{TRACER};
-use tracker::{WISKMAP, TRACKER, DEBUGMODE, CMDLINE, APP64BITONLY_PATTERNS};
+use tracker::{WISKMAP, TRACKER, DEBUGMODE, CMDLINE, APP64BITONLY_PATTERNS, EXECPREFIX_PATTERNS, WISK_EXECPREFIX};
 
 hook! {
     unsafe fn readlink(path: *const libc::c_char, buf: *mut libc::c_char, bufsiz: libc::size_t) -> libc::ssize_t => (my_readlink,SYS_readlink, true) {
@@ -292,22 +292,57 @@ fn execvpe_common (
                                          .replace("${LIB}/libwisktrack.so",
                                                   "lib64/libwisktrack.so")).unwrap();
 
-    let file = unsafe {
-        assert!(!file.is_null());
-        CStr::from_ptr(file) 
+    let (filecstr, argvecptr) = {
+        let filecstr = unsafe {
+            assert!(!file.is_null());
+            CStr::from_ptr(file)
+        };
+        cevent!(Level::INFO, "execvpe_common: EXECPREFIX_PATTERNS {} {:?}\n", filecstr.to_str().unwrap(), WISK_EXECPREFIX.is_empty());
+        if !WISK_EXECPREFIX.is_empty() && path::is_match(filecstr.to_str().unwrap(), &EXECPREFIX_PATTERNS, "") {
+            cevent!(Level::INFO, "execvpe_common: Absolute EXECPREFIX_PATTERNS {}\n", filecstr.to_str().unwrap());
+            // TRACKER.report("EXECPREFIX_DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+            let mut argvecptr = utils::vcstr2vecptr(&WISK_EXECPREFIX);
+            argvecptr.push(file);
+            for i in 1 .. {
+                unsafe {
+                    let argptr: *const c_char = *(argv.offset(i));
+                    if argptr != ptr::null() {
+                        argvecptr.push(argptr);
+                    } else {
+                        argvecptr.push(argptr);
+                        break;
+                    }
+                }
+            }
+            let filecstr = unsafe {
+                assert!(!argvecptr[0].is_null());
+                CStr::from_ptr(argvecptr[0])
+            };
+            // debug(format_args!("execprefix(): argv={:?}\n", utils::cpptr2vcstr(argvecptr.as_ptr())));
+            // debug(format_args!("execprefix(): file={:?}\n", filecstr));
+            // let file = WISK_EXECPREFIX[0].as_c_str();
+            (filecstr, argvecptr)
+        } else {
+            (filecstr, utils::cpptr2vecptr(argv))
+        }
     };
-    let file_bytes = file.to_bytes();
+    // debug(format_args!("exec(): argv={:?}\n", utils::cpptr2vcstr(argvecptr.as_ptr())));
+    // debug(format_args!("exec(): file={:?}\n", filecstr));
+    // cevent!(Level::INFO, "execvpe_common: {:?}\n", utils::cpptr2str(argv, " "));
+    let file_bytes = filecstr.to_bytes();
     /* We check the simple case first. */
-    if (file_bytes.len() == 0) {
+    if file_bytes.len() == 0 {
         e.0 = libc::ENOENT;
         set_errno(e);
         return -1;
     }
-    let argvold = argv;
-    let argv = utils::cpptr2vecptr(argv);
-     /* Don't search when it contains a slash.  */
-    if ( !search || file_bytes.iter().any(|i| *i as char == '/'))  { //. strchr (file, '/') != NULL)
-        if path::is_match(file.to_str().unwrap(), &APP64BITONLY_PATTERNS, cwd.as_str()) {
+    // let argvold = argv;
+    // let argv = utils::cpptr2vecptr(argv);
+    // debug(format_args!("execprefix(): N argv={:?}\n", utils::cpptr2vcstr(argvecptr.as_ptr())));
+    // debug(format_args!("execprefix(): N file={:?}\n", filecstr));
+    /* Don't search when it contains a slash.  */
+    if !search || file_bytes.iter().any(|i| *i as char == '/')  { //. strchr (file, '/') != NULL)
+        if APP64BITONLY_PATTERNS.len() != 0 && path::is_match(filecstr.to_str().unwrap(), &APP64BITONLY_PATTERNS, cwd.as_str()) {
             envp[0] = ld_preload_64bit.as_ptr();
             // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
             // TRACKER.report("APP64ONLY", &utils::cpptr2str(argvold, " "));
@@ -318,7 +353,7 @@ fn execvpe_common (
             utils::assert_ld_preload(&envp, false);
         }
         utils::assert_execenv(&envp, &PUUID);
-        let rv = unsafe { real!(execve)(file.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        let rv = unsafe { real!(execve)(filecstr.as_ptr(), argvecptr.as_ptr(), envp.as_ptr()) };
         return rv;
     }
 
@@ -334,9 +369,9 @@ fn execvpe_common (
     for p in path.split(":") {
         let mut p = p.to_owned();
         p.push_str("/");
-        p.push_str(file.to_str().unwrap());
+        p.push_str(filecstr.to_str().unwrap());
         let buffer = CString::new(p.as_str()).expect("Trouble Mapping executable String to CString");
-        if path::is_match(buffer.to_str().unwrap(), &APP64BITONLY_PATTERNS, cwd.as_str()) {
+        if APP64BITONLY_PATTERNS.len() != 0 && path::is_match(buffer.to_str().unwrap(), &APP64BITONLY_PATTERNS, cwd.as_str()) {
             envp[0] = ld_preload_64bit.as_ptr();
             // TRACKER.report("DEBUGDATA_64ONLY", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
             // TRACKER.report("DEBUGDATA_64ONLY", &utils::cpptr2str(argvold, " "));
@@ -348,7 +383,7 @@ fn execvpe_common (
             utils::assert_ld_preload(&envp, false);
         }
         utils::assert_execenv(&envp, &PUUID);
-        let rv = unsafe { real!(execve)(buffer.as_ptr(), argv.as_ptr(), envp.as_ptr()) };
+        let rv = unsafe { real!(execve)(buffer.as_ptr(), argvecptr.as_ptr(), envp.as_ptr()) };
         match errno().0 {
             libc::EACCES => {
                 /* Record that we got a 'Permission denied' error.  If we end
@@ -373,7 +408,7 @@ fn execvpe_common (
         }
     }
     /* We tried every element and none of them worked.  */
-    if (got_eacces)  {
+    if got_eacces  {
         /* At least one failure was due to permissions, so report that
            error.  */
         e.0 = libc::EACCES;
@@ -389,7 +424,7 @@ fn execvpe_common (
         setdebugmode!("execl");
         let mut ap: std::ffi::VaListImpl = args.clone();
         let mut vecptrs: Vec<_> =  vec!();
-        while true {
+        loop {
             let arg: *const c_char = ap.arg::<* const c_char>();
             if arg.is_null() {
                 vecptrs.push(arg);
@@ -414,7 +449,7 @@ dhook! {
         setdebugmode!("execlp");
         let mut ap: std::ffi::VaListImpl = args.clone();
         let mut vecptrs: Vec<_> =  vec!();
-        while true {
+        loop {
             let arg: *const c_char = ap.arg::<* const c_char>();
             if arg.is_null() {
                 vecptrs.push(arg);
@@ -439,7 +474,7 @@ dhook! {
         setdebugmode!("execle");
         let mut ap: std::ffi::VaListImpl = args.clone();
         let mut vecptrs: Vec<_> =  vec!();
-        while true {
+        loop {
             let arg: *const c_char = ap.arg::<* const c_char>();
             if arg.is_null() {
                 vecptrs.push(arg);
@@ -556,8 +591,50 @@ hook! {
                                    envcstr[0].as_c_str().to_str().unwrap()
                                              .replace("${LIB}/libwisktrack.so",
                                                       "lib64/libwisktrack.so")).unwrap();
-        let pathstr = CStr::from_ptr(path);
-        if path::is_match(pathstr.to_str().unwrap(), &APP64BITONLY_PATTERNS, "") {
+        let cwd = if let Ok(cwd) = env::current_dir() {
+            cwd.to_str().unwrap().to_owned()
+        } else {
+            String::new()
+        };
+        let (pathcstr, argvecptr) = {
+            let pathcstr = unsafe {
+                assert!(!path.is_null());
+                CStr::from_ptr(path)
+            };
+            // debug(format_args!("exec(): argv={:?}\n", utils::cpptr2vcstr(argv)));
+            // debug(format_args!("exec(): file={:?}\n", pathcstr));
+            if !WISK_EXECPREFIX.is_empty() && path::is_match(pathcstr.to_str().unwrap(), &EXECPREFIX_PATTERNS, cwd.as_str()) {
+                // cevent!(Level::INFO, "execvpe_common: Absolute EXECPREFIX_PATTERNS {} {}\n", pathcstr.to_str().unwrap(), cwd.as_str());
+                // TRACKER.report("EXECPREFIX_DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+                let mut argvecptr = utils::vcstr2vecptr(&WISK_EXECPREFIX);
+                argvecptr.push(path);
+                for i in 1 .. {
+                    unsafe {
+                        let argptr: *const c_char = *(argv.offset(i));
+                        if argptr != ptr::null() {
+                            argvecptr.push(argptr);
+                        } else {
+                            argvecptr.push(argptr);
+                            break;
+                        }
+                    }
+                }
+                let pathcstr = unsafe {
+                    assert!(!argvecptr[0].is_null());
+                    CStr::from_ptr(argvecptr[0])
+                };
+                // debug(format_args!("execprefix(): argv={:?}\n", utils::cpptr2vcstr(argvecptr.as_ptr())));
+                // debug(format_args!("execprefix(): file={:?}\n", pathcstr));
+                // let file = WISK_EXECPREFIX[0].as_c_str();
+                (pathcstr, argvecptr)
+            } else {
+                (pathcstr, utils::cpptr2vecptr(argv))
+            }
+        };
+        // debug(format_args!("exec(): argv={:?}\n", utils::cpptr2vcstr(argvecptr.as_ptr())));
+        // debug(format_args!("exec(): file={:?}\n", pathcstr));
+
+        if APP64BITONLY_PATTERNS.len() != 0 && path::is_match(pathcstr.to_str().unwrap(), &APP64BITONLY_PATTERNS, "") {
             envp[0] = ld_preload_64bit.as_ptr();
             utils::assert_ld_preload(&envp, true);
         } else {
@@ -566,8 +643,8 @@ hook! {
         }
         utils::assert_execenv(&envp, &PUUID);
 
-        TRACKER.reportexecvpe("posix_spawn", path, argv, &envcstr);
-        real!(posix_spawn)(pid, path, file_actions, attrp, argv, envp.as_ptr())
+        TRACKER.reportexecvpe("posix_spawn", pathcstr.as_ptr(), argvecptr.as_ptr(), &envcstr);
+        real!(posix_spawn)(pid, pathcstr.as_ptr(), file_actions, attrp, argvecptr.as_ptr(), envp.as_ptr())
     }
 }
 
@@ -585,8 +662,66 @@ hook! {
         let envcstr = utils::hashmap2vcstr(&env, vec!("LD_PRELOAD"));
         let mut envp = utils::vcstr2vecptr(&envcstr);
         envp.push(std::ptr::null());
-        TRACKER.reportexecvpe("posix_spawnp", file, argv, &envcstr);
-        real!(posix_spawnp)(pid, file, file_actions, attrp, argv, envp.as_ptr())
+        let ld_preload = envcstr[0].as_c_str().to_owned();
+        let ld_preload_64bit = CString::new(
+                                   envcstr[0].as_c_str().to_str().unwrap()
+                                             .replace("${LIB}/libwisktrack.so",
+                                                      "lib64/libwisktrack.so")).unwrap();
+
+        let cwd = if let Ok(cwd) = env::current_dir() {
+            cwd.to_str().unwrap().to_owned()
+        } else {
+            String::new()
+        };
+        let (filecstr, argvecptr) = {
+            let filecstr = unsafe {
+                assert!(!file.is_null());
+                CStr::from_ptr(file)
+            };
+            // debug(format_args!("execprefix(): argv={:?}\n", utils::cpptr2vcstr(argv)));
+            // debug(format_args!("execprefix(): file={:?}\n", filecstr));
+            if !WISK_EXECPREFIX.is_empty() && path::is_match(filecstr.to_str().unwrap(), &EXECPREFIX_PATTERNS, "") {
+                // cevent!(Level::INFO, "execvpe_common: Absolute EXECPREFIX_PATTERNS {} {}\n", filecstr.to_str().unwrap(), cwd.as_str());
+                // TRACKER.report("EXECPREFIX_DEBUGDATA", &serde_json::to_string(&CMDLINE.to_vec()).unwrap());
+                let mut argvecptr = utils::vcstr2vecptr(&WISK_EXECPREFIX);
+                argvecptr.push(file);
+                for i in 1 .. {
+                    unsafe {
+                        let argptr: *const c_char = *(argv.offset(i));
+                        if argptr != ptr::null() {
+                            argvecptr.push(argptr);
+                        } else {
+                            argvecptr.push(argptr);
+                            break;
+                        }
+                    }
+                }
+                let filecstr = unsafe {
+                    assert!(!argvecptr[0].is_null());
+                    CStr::from_ptr(argvecptr[0])
+                };
+                // debug(format_args!("execprefix(): argv={:?}\n", utils::cpptr2vcstr(argvecptr.as_ptr())));
+                // debug(format_args!("execprefix(): file={:?}\n", filecstr));
+                // let file = WISK_EXECPREFIX[0].as_c_str();
+                (filecstr, argvecptr)
+            } else {
+                (filecstr, utils::cpptr2vecptr(argv))
+            }
+        };
+        // debug(format_args!("exec(): argv={:?}\n", utils::cpptr2vcstr(argvecptr.as_ptr())));
+        // debug(format_args!("exec(): file={:?}\n", filecstr));
+
+        if APP64BITONLY_PATTERNS.len() != 0 && path::is_match(filecstr.to_str().unwrap(), &APP64BITONLY_PATTERNS, "") {
+            envp[0] = ld_preload_64bit.as_ptr();
+            utils::assert_ld_preload(&envp, true);
+        } else {
+            envp[0] = ld_preload.as_ptr();
+            utils::assert_ld_preload(&envp, false);
+        }
+        utils::assert_execenv(&envp, &PUUID);
+
+        TRACKER.reportexecvpe("posix_spawnp", filecstr.as_ptr(), argvecptr.as_ptr(), &envcstr);
+        real!(posix_spawnp)(pid, filecstr.as_ptr(), file_actions, attrp, argvecptr.as_ptr(), envp.as_ptr())
     }
 }
 

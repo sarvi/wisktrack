@@ -7,6 +7,7 @@ use std::process;
 use backtrace::Backtrace;
 use libc;
 use crate::common::{PUUID, UUID, WISKFDS};
+use crate::TRACER;
 
 
 pub struct BufWriter<W: Write> {

@@ -54,6 +54,7 @@ macro_rules! setdebugmode {
 pub struct Config {
     #[serde(default)]
     app64bitonly_patterns: Vec<String>,
+    execprefix_patterns: Vec<String>,
 }
 
 
@@ -67,7 +68,7 @@ const SENDLIMIT: usize = 4094;
 
 const WISK_FIELDS: &'static [&'static str] = &[
     "WISK_TRACE", "WISK_TRACK", "WISK_PUUID", "WISK_WSROOT", "WISK_CONFIG",
-    "WISK_CONFIG", "LD_PRELOAD", "RUST_BACKTRACE", "LD_DEBUG"];
+    "LD_PRELOAD", "RUST_BACKTRACE", "LD_DEBUG"];
 
 pub struct Tracker {
     pub file: File,
@@ -191,6 +192,18 @@ lazy_static! {
         fname
     };
 
+    pub static ref WISK_EXECPREFIX:Vec<CString> = {
+        let rv: Vec<CString> = match env::var("WISK_EXECPREFIX") {
+            Ok(v) =>  {
+                if v == "" { vec!() }
+                else { v.split(" ").map(|s| CString::new(s).unwrap()).collect() }
+                },
+            Err(_) => { vec!()},
+        };
+        // debug(format_args!("WISK_EXECPREFIX: {:?}\n", rv));
+        rv
+    };
+
     pub static ref WISKMAP : Vec<(String, String)> = {
         // debug(format_args!("WISKMAP\n"));
         let mut wiskmap: Vec<(String, String)> = utils::envextractwisk(WISK_FIELDS.to_vec());
@@ -260,13 +273,40 @@ lazy_static! {
                 }
             }).collect()
         } else {
-            vec!("^NOMATCH/.*$".to_owned())
+            // vec!("^NOMATCH/.*$".to_owned())
+            vec!()
         };
         // event!(Level::INFO,"p: {:?}", p);
         let x = RegexSet::new(&p).unwrap_or_else(|e| {
             errorexit!("WISK_ERROR: Error compiling list of regex in app_64bitonly_match: {:?}", e);
         });
         event!(Level::INFO, "APP64BITONLY_PATTERNS Reading....Done");
+        x
+    };
+
+    pub static ref  EXECPREFIX_PATTERNS: RegexSet = {
+        event!(Level::INFO, "EXECPREFIX_PATTERNS Reading....");
+        let p: Vec<String> = if !CONFIG.execprefix_patterns.is_empty() {
+            CONFIG.execprefix_patterns.iter().map(|v| {
+                if v.starts_with("^") {
+                    render(v,&TEMPLATEMAP)
+                } else {
+                    let mut x = "^".to_owned();
+                    x.push_str("{{RE_WSROOT}}");
+                    x.push_str("/");
+                    x.push_str(v);
+                    // eprintln!("REGEX: {}", x.as_str());
+                    render(x.as_str(),&TEMPLATEMAP)
+                }
+            }).collect()
+        } else {
+            vec!("^NOMATCH/.*$".to_owned())
+        };
+        // event!(Level::INFO,"p: {:?}", p);
+        let x = RegexSet::new(&p).unwrap_or_else(|e| {
+            errorexit!("WISK_ERROR: Error compiling list of regex in execprefix_match: {:?}", e);
+        });
+        event!(Level::INFO, "EXECPREFIX_PATTERNS Reading....Done");
         x
     };
 }
@@ -283,6 +323,7 @@ pub fn initialize_constructor_statics() {
     lazy_static::initialize(&UUID);
     lazy_static::initialize(&WISKTRACE);
     lazy_static::initialize(&WISKTRACK);
+    lazy_static::initialize(&WISK_EXECPREFIX);
     lazy_static::initialize(&WISKMAP);
     lazy_static::initialize(&ENV);
     lazy_static::initialize(&CMDLINE);
