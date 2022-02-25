@@ -9,3 +9,6 @@ app64bitonly_patterns:
 tracker_patterns:
     - '.*'
     - '/.*/bin/[a-zA-Z0-9_\-\.]*'
+
+# execprefix_patterns:
+#     - '^(/bin/|/usr/bin)?ls'

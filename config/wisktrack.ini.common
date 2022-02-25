@@ -6,3 +6,6 @@ y: 2.0
 app64bitonly_patterns:
     - 'asdadasd/asdai-++.sdad'
 
+# execprefix_patterns:
+#     - '^(/bin/|/usr/bin)?ls'
+

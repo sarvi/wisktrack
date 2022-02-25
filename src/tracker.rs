@@ -54,6 +54,7 @@ macro_rules! setdebugmode {
 pub struct Config {
     #[serde(default)]
     app64bitonly_patterns: Vec<String>,
+    #[serde(default)]
     execprefix_patterns: Vec<String>,
 }
 

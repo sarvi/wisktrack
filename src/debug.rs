@@ -28,12 +28,12 @@ macro_rules! event {
 
 #[macro_export]
 macro_rules! errorexit {
-    ($msg:tt) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {} Cmd: {:?}\nBacktrace:\n{:?}"),
-                                       PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>(),
-                                       Backtrace::new()); panic!() } };
-    ($msg:tt, $($arg:expr),*) => { { eprintln!( concat!("WISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {} Cmd: {:?}\nBacktrace:\n{:?}"),
-                                       $($arg),*, PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>(),
-                                       Backtrace::new()); panic!() } };
+    ($msg:tt) => { { eprintln!( concat!("Backtrace:\n{:?}\nWISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {} Cmd: {:?}"),
+                                Backtrace::new(), PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>());
+                                panic!() } };
+    ($msg:tt, $($arg:expr),*) => { { eprintln!( concat!("Backtrace:\n{:?}\nWISK_ERROR: ", $msg, "\nParentUUID: {}, UUID: {}, PID: {} Cmd: {:?}"),
+                                                Backtrace::new(), $($arg),*, PUUID.as_str(), UUID.as_str(), process::id(), std::env::args().collect::<Vec<String>>());
+                                                panic!() } };
 }
 
 #[macro_export]
