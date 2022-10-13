@@ -13,6 +13,7 @@ VARIANT_OPTION=
 endif
 
 SRCS:=src/lib.rs src/tracker.rs src/utils.rs
+GO_SRCS:=*.go **/*.go
 
 .PHONY: basics
 basics:
@@ -66,18 +67,31 @@ $(ROOT)/bin/cleanenv.sh: scripts/cleanenv.sh
 	install -D config/wisktrack.ini* $(ROOT)/config/
 	install -D stap/*.stp $(ROOT)/stap/
 
+$(ROOT)/bin/wiskdeps: ./wiskdeps
+	echo "install wiskdeps"
+	mkdir -p $(ROOT)/bin
+	install -D ./wiskdeps $(ROOT)/bin/
+
+./bin/wiskdeps: $(GO_SRCS)
+	mkdir -p bin/
+	go build -o ./bin/wiskdeps
+#	mv ./wiskdeps ./bin/wiskdeps
+
 .PHONY: tests
 tests: tests/testprog64 tests/testprog32 basics | cargo-tests
 
 .PHONY: buildonly
-buildonly: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so target/$(VARIANT)/libwisktrack.so basics
+buildonly: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so target/$(VARIANT)/libwisktrack.so basics ./bin/wiskdeps
 
 .PHONY: all
-all: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so target/$(VARIANT)/libwisktrack.so basics | cargo-tests
+all: target/i686-unknown-linux-gnu/$(VARIANT)/libwisktrack.so target/$(VARIANT)/libwisktrack.so basics ./bin/wiskdeps | cargo-tests
 
 .PHONY: install
-install: $(ROOT)/lib32/libwisktrack.so $(ROOT)/lib/libwisktrack.so $(ROOT)/bin/cleanenv.sh
+install: $(ROOT)/lib32/libwisktrack.so $(ROOT)/lib/libwisktrack.so $(ROOT)/bin/cleanenv.sh $(ROOT)/bin/wiskdeps
+	install -D ./bin/wiskdeps $(ROOT)/bin/
 
 .PHONY: clean
 clean:
 	cargo clean
+	go clean
+	rm -rf bin/wiskdeps

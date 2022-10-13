@@ -1,0 +1,4 @@
+github.com/klauspost/cpuid v1.3.1 h1:5JNjFYYQrZeKRJ0734q51WCEEn2huer72Dc7K+R/b6s=
+github.com/klauspost/cpuid v1.3.1/go.mod h1:bYW4mA6ZgKPob1/Dlai2LviZJO7KGI3uoWLd42rAQw4=
+lukechampine.com/blake3 v1.1.5 h1:hsACfxWvLdGmjYbWGrumQIphOvO+ZruZehWtgd2fxoM=
+lukechampine.com/blake3 v1.1.5/go.mod h1:hE8RpzdO8ttZ7446CXEwDP1eu2V4z7stv0Urj1El20g=
